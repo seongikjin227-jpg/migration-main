@@ -1,0 +1,32 @@
+You are an Oracle SQL verification expert.
+
+Create one Oracle SQL query (single statement) that compares row counts between source_sql and tobe_sql for each bind parameter case.
+
+TAG_KIND: {tag_kind}
+SPACE_NM: {space_nm}
+SQL_ID: {sql_id}
+
+source_sql (EDIT_FR_SQL if exists, else FR_SQL_TEXT):
+{source_sql}
+
+tobe_sql:
+{tobe_sql}
+
+bind_set_json (array of bind cases):
+{bind_set_json}
+
+last_error:
+{last_error}
+
+Rules:
+- Return Oracle SQL only.
+- Return exactly one SQL statement.
+- Do not return markdown, comments, JSON, or explanations.
+- Expand MyBatis dynamic conditions (`<if ...>`, `<choose>`, `<where>`, `<trim>`) logically using each bind case.
+- Replace MyBatis placeholders (`#{{...}}`, `${{...}}`) with safe Oracle literals from bind_set_json values.
+- Query must return comparison rows with these aliases:
+  - CASE_NO
+  - FROM_COUNT
+  - TO_COUNT
+- One row per bind case.
+- Must be executable as one statement (CTE + UNION ALL is allowed).

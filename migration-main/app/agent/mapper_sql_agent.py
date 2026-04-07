@@ -1,14 +1,17 @@
+import json
 import time
 
 from app.exceptions import LLMRateLimitError
 from app.logger import logger
 from app.repositories.mapper_repository import get_all_mapping_rules
 from app.repositories.result_repository import (
+    finalize_failed_job,
     get_feedback_examples,
-    update_target_flag,
-    update_tobe_sql_text,
+    update_cycle_result,
 )
-from app.services.llm_service import generate_tobe_sql
+from app.services.binding_service import bind_sets_to_json, build_bind_sets
+from app.services.llm_service import generate_bind_sql, generate_test_sql, generate_tobe_sql
+from app.services.validation_service import evaluate_status_from_test_rows, execute_binding_query, execute_test_query
 
 
 class MigrationOrchestrator:
@@ -21,10 +24,14 @@ class MigrationOrchestrator:
         last_error = None
 
         while retry_count <= max_retries:
+            stage = "INIT"
+            bind_set_json = "[]"
             try:
+                stage = "LOAD_RULES"
                 mapping_rules = get_all_mapping_rules()
                 feedback_examples = get_feedback_examples(job)
 
+                stage = "GENERATE_TOBE_SQL"
                 tobe_sql = generate_tobe_sql(
                     job=job,
                     mapping_rules=mapping_rules,
@@ -32,22 +39,87 @@ class MigrationOrchestrator:
                     feedback_examples=feedback_examples,
                 )
 
-                update_tobe_sql_text(job.row_id, tobe_sql)
-                update_target_flag(job.row_id, "N")
-                logger.info(f"[Orchestrator] ({job.space_nm}.{job.sql_id}) TO_SQL_TEXT updated")
+                stage = "GENERATE_BIND_SQL"
+                bind_sql = generate_bind_sql(
+                    job=job,
+                    tobe_sql=tobe_sql,
+                    mapping_rules=mapping_rules,
+                    last_error=last_error,
+                )
+                stage = "EXECUTE_BIND_SQL"
+                bind_query_rows = execute_binding_query(bind_sql, max_rows=50)
+                stage = "BUILD_BIND_SET"
+                bind_sets = build_bind_sets(
+                    tobe_sql=tobe_sql,
+                    source_sql=job.source_sql,
+                    bind_query_rows=bind_query_rows,
+                    max_cases=3,
+                )
+                bind_set_json = bind_sets_to_json(bind_sets)
+                logger.info(
+                    f"[Orchestrator] ({job.space_nm}.{job.sql_id}) bind cases prepared: {bind_set_json}"
+                )
+
+                stage = "GENERATE_TEST_SQL"
+                test_sql = generate_test_sql(
+                    job=job,
+                    tobe_sql=tobe_sql,
+                    bind_set_json=bind_set_json,
+                    last_error=last_error,
+                )
+                stage = "EXECUTE_TEST_SQL"
+                test_rows = execute_test_query(test_sql)
+                logger.info(
+                    f"[Orchestrator] ({job.space_nm}.{job.sql_id}) test rows: {json.dumps(test_rows, ensure_ascii=False)}"
+                )
+                stage = "EVALUATE_STATUS"
+                status = evaluate_status_from_test_rows(test_rows)
+                final_log = (
+                    f"FINAL SUCCESS stage=COMPLETED status={status} "
+                    f"job={job.space_nm}.{job.sql_id}"
+                )
+
+                stage = "UPDATE_DB"
+                update_cycle_result(
+                    row_id=job.row_id,
+                    tobe_sql=tobe_sql,
+                    bind_sql=bind_sql,
+                    bind_set=bind_set_json,
+                    test_sql=test_sql,
+                    status=status,
+                    final_log=final_log,
+                )
+                logger.info(
+                    f"[Orchestrator] ({job.space_nm}.{job.sql_id}) TO_SQL_TEXT/BIND_SQL/BIND_SET/TEST_SQL/STATUS updated"
+                )
                 return
 
             except LLMRateLimitError as exc:
                 retry_count += 1
                 last_error = str(exc)
-                logger.warning(f"[Orchestrator] LLM rate limit (retry={retry_count}): {last_error}")
+                logger.warning(
+                    f"[Orchestrator] ({job.space_nm}.{job.sql_id}) stage={stage} LLM rate limit "
+                    f"(retry={retry_count}): {last_error}"
+                )
                 time.sleep(1)
 
             except Exception as exc:
                 retry_count += 1
                 last_error = str(exc)
-                logger.error(f"[Orchestrator] Generation error (retry={retry_count}): {last_error}")
+                logger.error(
+                    f"[Orchestrator] ({job.space_nm}.{job.sql_id}) stage={stage} error "
+                    f"(retry={retry_count}): {last_error}"
+                )
+                if stage in {"GENERATE_TEST_SQL", "EXECUTE_TEST_SQL", "EVALUATE_STATUS"}:
+                    logger.error(
+                        f"[Orchestrator] ({job.space_nm}.{job.sql_id}) bind cases at failure: {bind_set_json}"
+                    )
                 time.sleep(1)
 
-        update_target_flag(job.row_id, "N")
+        failed_status = "FAIL(from count : NULL, to count : NULL)"
+        final_log = (
+            f"FINAL FAIL stage={stage} retry_count={retry_count} "
+            f"job={job.space_nm}.{job.sql_id} error={last_error or 'UNKNOWN'}"
+        )
+        finalize_failed_job(job.row_id, failed_status, final_log)
         logger.error(f"[Orchestrator] ({job.space_nm}.{job.sql_id}) failed after retries: {last_error}")

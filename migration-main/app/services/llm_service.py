@@ -66,6 +66,48 @@ def build_tobe_sql_messages(
     ]
 
 
+def build_bind_sql_messages(
+    job: SqlInfoJob,
+    tobe_sql: str,
+    mapping_rules: list[MappingRuleItem],
+    last_error: str | None = None,
+) -> list[dict[str, str]]:
+    merged_prompt = render_prompt(
+        "bind_sql_prompt.txt",
+        tag_kind=job.tag_kind or "None",
+        space_nm=job.space_nm,
+        sql_id=job.sql_id,
+        source_sql=job.source_sql,
+        tobe_sql=tobe_sql,
+        mapping_rules_json=_serialize_mapping_rules(mapping_rules),
+        last_error=last_error or "None",
+    )
+    return [
+        {"role": "system", "content": merged_prompt},
+    ]
+
+
+def build_test_sql_messages(
+    job: SqlInfoJob,
+    tobe_sql: str,
+    bind_set_json: str,
+    last_error: str | None = None,
+) -> list[dict[str, str]]:
+    merged_prompt = render_prompt(
+        "test_sql_prompt.txt",
+        tag_kind=job.tag_kind or "None",
+        space_nm=job.space_nm,
+        sql_id=job.sql_id,
+        source_sql=job.source_sql,
+        tobe_sql=tobe_sql,
+        bind_set_json=bind_set_json,
+        last_error=last_error or "None",
+    )
+    return [
+        {"role": "system", "content": merged_prompt},
+    ]
+
+
 def _extract_sql_text(response_text: str) -> str:
     text = response_text.strip()
     code_block_match = re.search(r"```(?:sql)?\s*(.*?)```", text, re.IGNORECASE | re.DOTALL)
@@ -135,5 +177,43 @@ def generate_tobe_sql(
             mapping_rules=mapping_rules,
             last_error=last_error,
             feedback_examples=feedback_examples,
+        ),
+    )
+
+
+def generate_bind_sql(
+    job: SqlInfoJob,
+    tobe_sql: str,
+    mapping_rules: list[MappingRuleItem],
+    last_error: str | None = None,
+) -> str:
+    return call_llm_api(
+        api_key=None,
+        model=None,
+        base_url=None,
+        messages=build_bind_sql_messages(
+            job=job,
+            tobe_sql=tobe_sql,
+            mapping_rules=mapping_rules,
+            last_error=last_error,
+        ),
+    )
+
+
+def generate_test_sql(
+    job: SqlInfoJob,
+    tobe_sql: str,
+    bind_set_json: str,
+    last_error: str | None = None,
+) -> str:
+    return call_llm_api(
+        api_key=None,
+        model=None,
+        base_url=None,
+        messages=build_test_sql_messages(
+            job=job,
+            tobe_sql=tobe_sql,
+            bind_set_json=bind_set_json,
+            last_error=last_error,
         ),
     )

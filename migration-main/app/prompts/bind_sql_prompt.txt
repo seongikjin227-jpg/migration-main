@@ -1,0 +1,45 @@
+You are an Oracle SQL expert for MyBatis dynamic SQL.
+
+Generate one Oracle SQL query (single statement) that returns bind-parameter candidate rows for validation.
+
+TAG_KIND: {tag_kind}
+SPACE_NM: {space_nm}
+SQL_ID: {sql_id}
+
+source_sql (EDIT_FR_SQL if exists, else FR_SQL_TEXT):
+{source_sql}
+
+tobe_sql:
+{tobe_sql}
+
+mapping_rules_json:
+{mapping_rules_json}
+
+last_error:
+{last_error}
+
+Hard requirements:
+- Return Oracle SQL only.
+- Return exactly one executable SQL statement.
+- Do not return markdown, comments, JSON, or explanations.
+- Analyze MyBatis dynamic conditions in `tobe_sql` (`<if>`, `<choose>`, `<when>`, `<otherwise>`, `<where>`, `<trim>`).
+- Infer bind parameter names from MyBatis placeholders (`#{{...}}`, `${{...}}`) and condition expressions.
+- Output columns must be aliased to bind parameter names so rows can be used as bind sets directly.
+- Return at most 3 rows.
+
+Case design requirements:
+- If dynamic conditions exist: rows must represent distinct condition cases (different null/non-null or branch activation patterns).
+- Avoid overlapping/duplicate cases.
+- Prioritize realistic values from actual tables/columns used by the query.
+- If dynamic conditions do NOT exist: return 3 rows from the same logical case (same predicate shape is fine).
+
+Query construction guidance:
+- Prefer mapped TO-BE tables/columns from `mapping_rules_json`.
+- If exact target columns are unclear, use representative columns from the main driving table.
+- Bind-parameter priority for candidate extraction:
+  - Priority 1: parameters that affect row-set shaping in `FROM`/`JOIN` sections (including inline views/subqueries used in FROM).
+  - Priority 2: parameters used in join predicates and core `WHERE` filters on driving tables.
+  - Priority 3: optional/detail filters (post-filter, secondary predicates).
+  - If not all parameters can be represented richly, preserve high-quality values for higher-priority parameters first.
+- Use a single query (CTE + UNION ALL allowed).
+- Ensure Oracle compatibility.

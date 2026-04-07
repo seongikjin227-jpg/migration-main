@@ -16,7 +16,7 @@ Binding placeholder policy (strict):
 mapping_rules_json from NEXT_MIG_INFO:
 {mapping_rules_json}
 
-feedback_examples_json from NEXT_SQL_INFO.USER_EDITED/CORRECT_SQL:
+feedback_examples_json from NEXT_SQL_INFO.EDITED_YN/CORRECT_SQL:
 {feedback_examples_json}
 
 last_error:

@@ -14,10 +14,15 @@ class SqlInfoJob:
     fr_sql_text: str
     edit_fr_sql: Optional[str] = None
     to_sql_text: Optional[str] = None
+    bind_sql: Optional[str] = None
+    bind_set: Optional[str] = None
+    test_sql: Optional[str] = None
+    status: Optional[str] = None
+    log_text: Optional[str] = None
     use_yn: Optional[str] = None
     target_yn: Optional[str] = None
     upd_ts: Optional[datetime] = None
-    user_edited: Optional[str] = None
+    edited_yn: Optional[str] = None
     correct_sql: Optional[str] = None
 
     @property

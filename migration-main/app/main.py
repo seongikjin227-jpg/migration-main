@@ -27,13 +27,13 @@ if __name__ == "__main__":
     scheduler.add_job(
         poll_database,
         "interval",
-        minutes=10,
+        minutes=1,
         id="poll_database",
         max_instances=1,
         coalesce=True,
     )
 
-    logger.info("APScheduler started. Polling Oracle every 10 minutes.")
+    logger.info("APScheduler started. Polling Oracle every 1 minute.")
     logger.info("Press Ctrl+C to stop.")
 
     try:

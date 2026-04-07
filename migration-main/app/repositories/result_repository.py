@@ -29,11 +29,16 @@ def _row_to_sql_info_job(row) -> SqlInfoJob:
         fr_sql_text=_to_text(row[4]),
         edit_fr_sql=_to_optional_text(row[5]),
         to_sql_text=_to_optional_text(row[6]),
-        use_yn=row[7],
-        target_yn=row[8],
-        upd_ts=row[9],
-        user_edited=_to_optional_text(row[10]),
-        correct_sql=_to_optional_text(row[11]),
+        bind_sql=_to_optional_text(row[7]),
+        bind_set=_to_optional_text(row[8]),
+        test_sql=_to_optional_text(row[9]),
+        status=_to_optional_text(row[10]),
+        log_text=_to_optional_text(row[11]),
+        use_yn=row[12],
+        target_yn=row[13],
+        upd_ts=row[14],
+        edited_yn=_to_optional_text(row[15]),
+        correct_sql=_to_optional_text(row[16]),
     )
 
 
@@ -43,7 +48,8 @@ def get_pending_jobs() -> list[SqlInfoJob]:
     query = f"""
         SELECT ROWIDTOCHAR(ROWID) AS RID,
                TAG_KIND, SPACE_NM, SQL_ID, FR_SQL_TEXT, EDIT_FR_SQL,
-               TO_SQL_TEXT, USE_YN, TARGET_YN, UPD_TS, USER_EDITED, CORRECT_SQL
+               TO_SQL_TEXT, BIND_SQL, BIND_SET, TEST_SQL, STATUS, LOG,
+               USE_YN, TARGET_YN, UPD_TS, EDITED_YN, CORRECT_SQL
         FROM {table}
         WHERE USE_YN = 'Y'
           AND TARGET_YN = 'Y'
@@ -59,66 +65,64 @@ def get_pending_jobs() -> list[SqlInfoJob]:
     return jobs
 
 
-def lock_job(row_id: str) -> bool:
-    table = get_result_table()
-    query = f"""
-        UPDATE {table}
-        SET TARGET_YN = 'R',
-            UPD_TS = CURRENT_TIMESTAMP
-        WHERE ROWID = CHARTOROWID(:1)
-          AND TARGET_YN = 'Y'
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, [row_id])
-        if cursor.rowcount > 0:
-            conn.commit()
-            return True
-        return False
-
-
-def update_tobe_sql_text(row_id: str, tobe_sql: str):
+def update_cycle_result(
+    row_id: str,
+    tobe_sql: str,
+    bind_sql: str,
+    bind_set: str,
+    test_sql: str,
+    status: str,
+    final_log: str,
+):
     table = get_result_table()
     query = f"""
         UPDATE {table}
         SET TO_SQL_TEXT = :1,
+            BIND_SQL = :2,
+            BIND_SET = :3,
+            TEST_SQL = :4,
+            STATUS = :5,
+            LOG = :6,
+            TARGET_YN = 'N',
             UPD_TS = CURRENT_TIMESTAMP
-        WHERE ROWID = CHARTOROWID(:2)
+        WHERE ROWID = CHARTOROWID(:7)
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, [tobe_sql, row_id])
+        cursor.execute(query, [tobe_sql, bind_sql, bind_set, test_sql, status, final_log, row_id])
         conn.commit()
 
 
-def update_target_flag(row_id: str, target_yn: str):
+def finalize_failed_job(row_id: str, status: str, final_log: str):
     table = get_result_table()
     query = f"""
         UPDATE {table}
-        SET TARGET_YN = :1,
+        SET STATUS = :1,
+            LOG = :2,
+            TARGET_YN = 'N',
             UPD_TS = CURRENT_TIMESTAMP
-        WHERE ROWID = CHARTOROWID(:2)
+        WHERE ROWID = CHARTOROWID(:3)
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, [target_yn, row_id])
+        cursor.execute(query, [status, final_log, row_id])
         conn.commit()
 
 
 def get_feedback_examples(job: SqlInfoJob, limit: int = 5) -> list[dict[str, str]]:
     """
-    Build feedback examples from NEXT_SQL_INFO.USER_EDITED and CORRECT_SQL.
+    Build feedback examples from NEXT_SQL_INFO.EDITED_YN and CORRECT_SQL.
     """
     table = get_result_table()
     safe_limit = max(1, min(limit, 20))
     query = f"""
-        SELECT USER_EDITED, CORRECT_SQL, TO_SQL_TEXT
+        SELECT EDITED_YN, CORRECT_SQL, TO_SQL_TEXT
         FROM (
-            SELECT USER_EDITED, CORRECT_SQL, TO_SQL_TEXT
+            SELECT EDITED_YN, CORRECT_SQL, TO_SQL_TEXT
             FROM {table}
             WHERE TO_CHAR(SPACE_NM) = :1
               AND TO_CHAR(SQL_ID) = :2
-              AND (USER_EDITED IS NOT NULL OR CORRECT_SQL IS NOT NULL)
+              AND (EDITED_YN = 'Y' OR CORRECT_SQL IS NOT NULL)
             ORDER BY UPD_TS DESC
         )
         WHERE ROWNUM <= {safe_limit}
@@ -130,7 +134,7 @@ def get_feedback_examples(job: SqlInfoJob, limit: int = 5) -> list[dict[str, str
         for row in cursor.fetchall():
             examples.append(
                 {
-                    "user_edited": _to_text(row[0]),
+                    "edited_yn": _to_text(row[0]),
                     "correct_sql": _to_text(row[1]),
                     "generated_sql": _to_text(row[2]),
                 }
