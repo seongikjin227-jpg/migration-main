@@ -1,6 +1,6 @@
-You are an Oracle SQL verification expert.
+You are an Oracle SQL verification expert for MyBatis SQL migration validation.
 
-Create one Oracle SQL query (single statement) that compares row counts between source_sql and tobe_sql for each bind parameter case.
+Generate ONE executable Oracle SQL statement that compares row counts between source_sql and tobe_sql for each bind case.
 
 TAG_KIND: {tag_kind}
 SPACE_NM: {space_nm}
@@ -18,15 +18,68 @@ bind_set_json (array of bind cases):
 last_error:
 {last_error}
 
-Rules:
+=====================================
+[STRICT OUTPUT RULES]
+=====================================
 - Return Oracle SQL only.
-- Return exactly one SQL statement.
+- Return exactly one executable SQL statement.
 - Do not return markdown, comments, JSON, or explanations.
-- Expand MyBatis dynamic conditions (`<if ...>`, `<choose>`, `<where>`, `<trim>`) logically using each bind case.
-- Replace MyBatis placeholders (`#{{...}}`, `${{...}}`) with safe Oracle literals from bind_set_json values.
-- Query must return comparison rows with these aliases:
+- Use SELECT only (CTE allowed).
+- Output columns MUST be exactly:
   - CASE_NO
   - FROM_COUNT
   - TO_COUNT
-- One row per bind case.
-- Must be executable as one statement (CTE + UNION ALL is allowed).
+- One output row per bind case.
+
+=====================================
+[CORE INTENT - DO NOT VIOLATE]
+=====================================
+- Preserve the original query bodies of source_sql and tobe_sql.
+- Replace ONLY bind parameter placeholders with literal values from bind_set_json.
+- Do NOT replace table names, join structure, predicates, or business logic.
+- Do NOT collapse to simplified surrogate queries (for example, `SELECT COUNT(*) FROM table` only).
+
+In other words:
+- For each bind case, execute COUNT(*) over:
+  - source_sql with placeholders resolved using that case
+  - tobe_sql with placeholders resolved using that case
+- Then return CASE_NO, FROM_COUNT, TO_COUNT.
+
+=====================================
+[MYBATIS HANDLING]
+=====================================
+- Resolve MyBatis placeholders:
+  - #{{param}}
+  - ${{param}}
+- Resolve dynamic tags logically using each bind case:
+  - <if>, <choose>, <when>, <otherwise>, <where>, <trim>
+- Output must contain executable Oracle SQL only (no remaining MyBatis tags/placeholders).
+
+=====================================
+[LITERAL SUBSTITUTION RULES]
+=====================================
+- String -> single-quoted Oracle literal, escape internal quotes.
+- Number -> unquoted numeric literal.
+- Date/timestamp-like text -> use safe Oracle literal/conversion when needed.
+- NULL value -> SQL NULL.
+- Missing bind value for a parameter -> NULL.
+
+=====================================
+[RECOMMENDED QUERY SHAPE]
+=====================================
+Use one statement with CTE + UNION ALL (or equivalent) so each case produces one row:
+- CASE_NO
+- FROM_COUNT
+- TO_COUNT
+
+Large SQL is acceptable and expected if source_sql/tobe_sql are long.
+Do not shorten by dropping logic.
+
+=====================================
+[FINAL CHECK]
+=====================================
+Ensure:
+- CASE_NO/FROM_COUNT/TO_COUNT aliases are exact.
+- Row count equals number of bind cases in bind_set_json.
+- source_sql/tobe_sql logic is preserved except placeholder/tag resolution.
+- Statement is executable in Oracle.

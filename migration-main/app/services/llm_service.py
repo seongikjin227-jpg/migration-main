@@ -2,6 +2,7 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Iterable
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -124,7 +125,67 @@ def _extract_sql_text(response_text: str) -> str:
         text = text[first_sql_keyword.start():].strip()
     if not re.match(r"^(SELECT|INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|WITH)\b", text, re.IGNORECASE):
         raise ValueError("LLM response does not start with executable SQL.")
-    return text.rstrip(";")
+    return _normalize_oracle_sql(text)
+
+
+def _strip_sqlplus_terminator_lines(lines: Iterable[str]) -> list[str]:
+    cleaned = []
+    for line in lines:
+        if line.strip() == "/":
+            continue
+        cleaned.append(line)
+    return cleaned
+
+
+def _replace_limit_with_fetch_first(text: str) -> str:
+    # Convert trailing LIMIT to Oracle-friendly FETCH FIRST syntax.
+    return re.sub(
+        r"\s+LIMIT\s+(\d+)\s*$",
+        r" FETCH FIRST \1 ROWS ONLY",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def _normalize_oracle_sql(sql_text: str) -> str:
+    text = sql_text.replace("\ufeff", "").replace("\u200b", "").replace("\u00a0", " ")
+    text = "\n".join(_strip_sqlplus_terminator_lines(text.splitlines())).strip()
+    text = _replace_limit_with_fetch_first(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\s+\n", "\n", text)
+    text = text.strip().rstrip(";").strip()
+
+    # Reject stacked statements to avoid ORA-00933/00911 caused by extra separators.
+    if _has_unquoted_semicolon(text):
+        raise ValueError("LLM response must contain exactly one SQL statement.")
+    if not text:
+        raise ValueError("LLM returned an empty SQL statement after normalization.")
+    return text
+
+
+def _has_unquoted_semicolon(sql_text: str) -> bool:
+    in_single_quote = False
+    idx = 0
+    length = len(sql_text)
+    while idx < length:
+        ch = sql_text[idx]
+        if in_single_quote:
+            if ch == "'":
+                # Oracle escaped quote: ''
+                if idx + 1 < length and sql_text[idx + 1] == "'":
+                    idx += 2
+                    continue
+                in_single_quote = False
+            idx += 1
+            continue
+        if ch == "'":
+            in_single_quote = True
+            idx += 1
+            continue
+        if ch == ";":
+            return True
+        idx += 1
+    return False
 
 
 def _to_langchain_messages(messages: list[dict[str, str]]):
@@ -157,7 +218,14 @@ def call_llm_api(api_key: str | None, model: str | None, base_url: str | None, m
         return _extract_sql_text(text)
     except Exception as exc:
         msg = str(exc)
-        if "429" in msg or "rate limit" in msg.lower():
+        lowered = msg.lower()
+        if (
+            "429" in msg
+            or "rate limit" in lowered
+            or "504" in msg
+            or "gateway timeout" in lowered
+            or "timed out" in lowered
+        ):
             raise LLMRateLimitError(msg) from exc
         raise
 

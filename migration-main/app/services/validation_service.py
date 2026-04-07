@@ -1,4 +1,3 @@
-import json
 import re
 from typing import Any
 
@@ -6,31 +5,39 @@ from app.config import get_connection
 from app.exceptions import DBSqlError
 
 
-def _literal(value: Any) -> str:
-    if value is None:
-        return "NULL"
-    if isinstance(value, (int, float)):
-        return str(value)
-    escaped = str(value).replace("'", "''")
-    return f"'{escaped}'"
+_FORBIDDEN_RUNTIME_TOKENS = (
+    "<if",
+    "<choose",
+    "<when",
+    "<otherwise",
+    "<where",
+    "<trim",
+    "#{",
+    "${",
+)
 
 
-def _preview_applied_sql(sql: str, bind_values: dict[str, Any]) -> str:
-    applied = sql
-    for key, value in bind_values.items():
-        applied = re.sub(rf":{re.escape(str(key))}\b", _literal(value), applied)
-    return applied
+def _shorten_sql_for_log(sql_text: str, max_len: int = 700) -> str:
+    one_line = re.sub(r"\s+", " ", (sql_text or "")).strip()
+    if len(one_line) <= max_len:
+        return one_line
+    return one_line[:max_len] + "...(truncated)"
 
 
 def execute_binding_query(binding_query_sql: str, max_rows: int = 20) -> list[dict[str, Any]]:
-    clean_sql = binding_query_sql.strip().rstrip(";")
+    clean_sql = _prepare_runtime_sql(binding_query_sql, stage="EXECUTE_BIND_SQL")
     if not clean_sql:
         raise DBSqlError("Binding query SQL is empty.")
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(clean_sql)
-        columns = [column[0] for column in cursor.description] if cursor.description else []
-        rows = cursor.fetchmany(max_rows)
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(clean_sql)
+            columns = [column[0] for column in cursor.description] if cursor.description else []
+            rows = cursor.fetchmany(max_rows)
+    except Exception as exc:
+        raise DBSqlError(
+            f"EXECUTE_BIND_SQL failed: {exc} | SQL={_shorten_sql_for_log(clean_sql)}"
+        ) from exc
     bind_sets: list[dict[str, Any]] = []
     for row in rows:
         bind_item: dict[str, Any] = {}
@@ -43,46 +50,21 @@ def execute_binding_query(binding_query_sql: str, max_rows: int = 20) -> list[di
     return bind_sets
 
 
-def verify_select_sql(tobe_sql: str, bind_sets: list[dict[str, Any]]) -> tuple[str, str | None, int | None, str]:
-    clean_sql = tobe_sql.strip().rstrip(";")
+def execute_test_query(test_sql: str) -> list[dict[str, Any]]:
+    clean_sql = _prepare_runtime_sql(test_sql, stage="EXECUTE_TEST_SQL")
     if not clean_sql:
-        return "FAIL", "TO-BE SQL is empty.", None, ""
+        raise DBSqlError("TEST SQL is empty.")
 
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            if bind_sets:
-                total_row_count = 0
-                applied_sql = _preview_applied_sql(clean_sql, bind_sets[0])
-                for bind_set in bind_sets:
-                    cursor.execute(clean_sql, bind_set)
-                    rows = cursor.fetchall()
-                    total_row_count += len(rows)
-                row_count = total_row_count
-            else:
-                cursor.execute(clean_sql)
-                rows = cursor.fetchall()
-                row_count = len(rows)
-                applied_sql = clean_sql
-        return "SUCCESS", None, row_count, applied_sql
+            cursor.execute(clean_sql)
+            columns = [column[0] for column in cursor.description] if cursor.description else []
+            rows = cursor.fetchall()
     except Exception as exc:
-        return "FAIL", str(exc), None, ""
-
-
-def to_json_text(bind_sets: list[dict[str, Any]]) -> str:
-    return json.dumps(bind_sets, ensure_ascii=False)
-
-
-def execute_test_query(test_sql: str) -> list[dict[str, Any]]:
-    clean_sql = test_sql.strip().rstrip(";")
-    if not clean_sql:
-        raise DBSqlError("TEST SQL is empty.")
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(clean_sql)
-        columns = [column[0] for column in cursor.description] if cursor.description else []
-        rows = cursor.fetchall()
+        raise DBSqlError(
+            f"EXECUTE_TEST_SQL failed: {exc} | SQL={_shorten_sql_for_log(clean_sql)}"
+        ) from exc
 
     result = []
     for row in rows:
@@ -146,3 +128,69 @@ def evaluate_status_from_test_rows(rows: list[dict[str, Any]]) -> str:
         from_display = "NULL" if first_mismatch[0] is None else str(first_mismatch[0])
         to_display = "NULL" if first_mismatch[1] is None else str(first_mismatch[1])
     return f"FAIL(from count : {from_display}, to count : {to_display})"
+
+
+def _prepare_runtime_sql(sql_text: str, stage: str) -> str:
+    clean_sql = (sql_text or "").replace("\ufeff", "").strip().rstrip(";").strip()
+    if not clean_sql:
+        return clean_sql
+    if stage in {"EXECUTE_BIND_SQL", "EXECUTE_TEST_SQL"}:
+        clean_sql = _normalize_select_row_limit(clean_sql)
+    lowered = clean_sql.lower()
+    for token in _FORBIDDEN_RUNTIME_TOKENS:
+        if token in lowered:
+            raise DBSqlError(
+                f"{stage} generated non-executable SQL containing '{token}'. "
+                "MyBatis tags/placeholders must be fully resolved before execution."
+            )
+    if _has_unquoted_semicolon(clean_sql):
+        raise DBSqlError(f"{stage} generated multiple SQL statements; only one statement is allowed.")
+    return clean_sql
+
+
+def _normalize_select_row_limit(sql_text: str) -> str:
+    text = sql_text.strip().rstrip(";")
+    # Oracle 11g compatibility: LIMIT n => SELECT * FROM (...) WHERE ROWNUM <= n
+    limit_match = re.search(r"\s+LIMIT\s+(\d+)\s*$", text, flags=re.IGNORECASE)
+    if limit_match:
+        limit = int(limit_match.group(1))
+        inner = re.sub(r"\s+LIMIT\s+\d+\s*$", "", text, flags=re.IGNORECASE).strip()
+        return f"SELECT * FROM ({inner}) WHERE ROWNUM <= {limit}"
+
+    # Oracle 11g compatibility: FETCH FIRST n ROWS ONLY => ROWNUM wrapper
+    fetch_match = re.search(r"\s+FETCH\s+FIRST\s+(\d+)\s+ROWS\s+ONLY\s*$", text, flags=re.IGNORECASE)
+    if fetch_match:
+        limit = int(fetch_match.group(1))
+        inner = re.sub(
+            r"\s+FETCH\s+FIRST\s+\d+\s+ROWS\s+ONLY\s*$",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        ).strip()
+        return f"SELECT * FROM ({inner}) WHERE ROWNUM <= {limit}"
+
+    return text
+
+
+def _has_unquoted_semicolon(sql_text: str) -> bool:
+    in_single_quote = False
+    idx = 0
+    length = len(sql_text)
+    while idx < length:
+        ch = sql_text[idx]
+        if in_single_quote:
+            if ch == "'":
+                if idx + 1 < length and sql_text[idx + 1] == "'":
+                    idx += 2
+                    continue
+                in_single_quote = False
+            idx += 1
+            continue
+        if ch == "'":
+            in_single_quote = True
+            idx += 1
+            continue
+        if ch == ";":
+            return True
+        idx += 1
+    return False

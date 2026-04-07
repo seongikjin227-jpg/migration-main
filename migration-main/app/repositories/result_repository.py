@@ -1,6 +1,8 @@
 from app.config import get_connection, get_result_table
 from app.models import SqlInfoJob
 
+_COLUMN_LENGTH_CACHE: dict[str, dict[str, int]] = {}
+
 
 def _to_text(value, default: str = "") -> str:
     if value is None:
@@ -53,6 +55,7 @@ def get_pending_jobs() -> list[SqlInfoJob]:
         FROM {table}
         WHERE USE_YN = 'Y'
           AND TARGET_YN = 'Y'
+          AND UPPER(TRIM(TAG_KIND)) = 'SELECT'
         ORDER BY UPD_TS NULLS FIRST, TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID)
     """
 
@@ -75,6 +78,17 @@ def update_cycle_result(
     final_log: str,
 ):
     table = get_result_table()
+    payload = _fit_payload_to_column_limits(
+        table=table,
+        values={
+            "TO_SQL_TEXT": tobe_sql,
+            "BIND_SQL": bind_sql,
+            "BIND_SET": bind_set,
+            "TEST_SQL": test_sql,
+            "STATUS": status,
+            "LOG": final_log,
+        },
+    )
     query = f"""
         UPDATE {table}
         SET TO_SQL_TEXT = :1,
@@ -89,12 +103,30 @@ def update_cycle_result(
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, [tobe_sql, bind_sql, bind_set, test_sql, status, final_log, row_id])
+        cursor.execute(
+            query,
+            [
+                payload["TO_SQL_TEXT"],
+                payload["BIND_SQL"],
+                payload["BIND_SET"],
+                payload["TEST_SQL"],
+                payload["STATUS"],
+                payload["LOG"],
+                row_id,
+            ],
+        )
         conn.commit()
 
 
 def finalize_failed_job(row_id: str, status: str, final_log: str):
     table = get_result_table()
+    payload = _fit_payload_to_column_limits(
+        table=table,
+        values={
+            "STATUS": status,
+            "LOG": final_log,
+        },
+    )
     query = f"""
         UPDATE {table}
         SET STATUS = :1,
@@ -105,7 +137,7 @@ def finalize_failed_job(row_id: str, status: str, final_log: str):
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, [status, final_log, row_id])
+        cursor.execute(query, [payload["STATUS"], payload["LOG"], row_id])
         conn.commit()
 
 
@@ -140,3 +172,51 @@ def get_feedback_examples(job: SqlInfoJob, limit: int = 5) -> list[dict[str, str
                 }
             )
     return examples
+
+
+def _fit_payload_to_column_limits(table: str, values: dict[str, str]) -> dict[str, str]:
+    lengths = _get_column_data_lengths(table)
+    fitted: dict[str, str] = {}
+    for column, value in values.items():
+        limit = lengths.get(column.upper())
+        text = _to_text(value, default="")
+        fitted[column] = _truncate_utf8_by_bytes(text, limit) if limit else text
+    return fitted
+
+
+def _get_column_data_lengths(table: str) -> dict[str, int]:
+    normalized_table = table.upper()
+    if normalized_table in _COLUMN_LENGTH_CACHE:
+        return _COLUMN_LENGTH_CACHE[normalized_table]
+
+    query = """
+        SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH
+        FROM USER_TAB_COLUMNS
+        WHERE TABLE_NAME = :1
+    """
+    lengths: dict[str, int] = {}
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, [normalized_table])
+        for col_name, data_type, data_length in cursor.fetchall():
+            col = _to_text(col_name).upper()
+            dtype = _to_text(data_type).upper()
+            # Do not truncate LOB columns.
+            if "CLOB" in dtype:
+                continue
+            try:
+                lengths[col] = int(data_length)
+            except Exception:
+                continue
+
+    _COLUMN_LENGTH_CACHE[normalized_table] = lengths
+    return lengths
+
+
+def _truncate_utf8_by_bytes(text: str, byte_limit: int) -> str:
+    if byte_limit <= 0:
+        return ""
+    encoded = text.encode("utf-8", errors="ignore")
+    if len(encoded) <= byte_limit:
+        return text
+    return encoded[:byte_limit].decode("utf-8", errors="ignore")
