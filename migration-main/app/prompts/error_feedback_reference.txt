@@ -1,0 +1,40 @@
+[ERROR & FEEDBACK REFERENCE - PRIORITIZE THESE RULES]
+
+Purpose:
+- Use this as operational guidance based on recurring failures and user-requested corrections.
+- Prioritize correctness, executability, and minimal-diff fixes over stylistic rewrites.
+
+1) Mapping rule interpretation (latest schema)
+- mapping_rules_json is built from NEXT_MIG_INFO + NEXT_MIG_INFO_DTL.
+- Real mapping signal is: FR_TABLE / FR_COL -> TO_TABLE / TO_COL.
+- MAP_TYPE may be blank and is not a reliable signal.
+
+2) Frequent failure patterns to avoid
+- ORA-00933 / ORA-00911: generated multi-statements or leftover separators.
+  -> Return exactly one executable Oracle SQL statement.
+- Non-executable output: markdown, comments, JSON wrappers, explanations.
+  -> Output SQL only.
+- Placeholder style drift:
+  -> Preserve MyBatis placeholders in TO-BE SQL (`#{{...}}`, `${{...}}`).
+  -> For TEST SQL, fully resolve placeholders/tags to executable Oracle SQL.
+- Over-simplified validation SQL:
+  -> Do not replace original query bodies with surrogate COUNT-only shortcuts.
+  -> Keep source_sql and tobe_sql business logic intact.
+- Fake bind values:
+  -> For BIND SQL, use real table data; avoid literal-only synthetic rows.
+
+3) User correction preference
+- If last_error exists, fix that exact issue first and avoid over-correction.
+- If feedback_examples_json includes corrected patterns, prefer those patterns.
+- Keep edits minimal-diff when SQL is long; do not rewrite unrelated parts.
+
+4) TEST SQL construction guardrails
+- One row per bind case (CASE_NO, FROM_COUNT, TO_COUNT).
+- Prefer UNION ALL with per-case literal substitution into original bodies.
+- No synthetic bind-case CTE tables (e.g., BIND_CASES/PARAM_CASES).
+
+5) Final pre-output checklist
+- Oracle-executable single statement.
+- Required output columns/aliases are exact.
+- Mapping usage follows FR/TO table-column pairs.
+- SQL remains faithful to original business logic.

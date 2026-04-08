@@ -42,5 +42,9 @@ def get_mapping_rule_table() -> str:
     return "NEXT_MIG_INFO"
 
 
+def get_mapping_rule_detail_table() -> str:
+    return "NEXT_MIG_INFO_DTL"
+
+
 def get_result_table() -> str:
     return "NEXT_SQL_INFO"

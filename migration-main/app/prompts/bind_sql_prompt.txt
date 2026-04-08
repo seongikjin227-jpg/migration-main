@@ -25,11 +25,23 @@ source_sql:
 tobe_sql:
 {tobe_sql}
 
-mapping_rules_json:
+mapping_rules_json (from NEXT_MIG_INFO + NEXT_MIG_INFO_DTL):
 {mapping_rules_json}
+Interpretation:
+- Use FR_TABLE / FR_COL -> TO_TABLE / TO_COL as the actual mapping signal.
+- Ignore MAP_TYPE if blank; do not infer meaning from row sequence values.
+
+feedback_examples_json:
+{feedback_examples_json}
+
+bind_target_hints_json:
+{bind_target_hints_json}
 
 last_error:
 {last_error}
+
+error_feedback_reference:
+{error_feedback_reference}
 
 =====================================
 [STRICT OUTPUT RULES]
@@ -77,6 +89,12 @@ Step 1. Find direct comparison in SQL:
     MENU_CD = #{{menuCd}}
   -> use MENU_CD column
 
+Step 1.5 (HARD OVERRIDE):
+  If bind_target_hints_json contains the parameter with one or more columns,
+  those columns are considered DIRECT TARGET COLUMNS.
+  You MUST preferentially use those exact columns in the SELECT source/join path.
+  Do NOT replace them with synthetic constants.
+
 Step 2. If not found:
   -> use mapping_rules_json to find mapped column
 
@@ -90,6 +108,7 @@ DO NOT:
 - Use unrelated columns
 - Use arbitrary text columns just to fill values
 - Reference TO-BE-only columns that may not exist physically yet
+- If direct target columns exist, do NOT generate literal-only synthetic rows via DUAL
 
 =====================================
 [VALUE SELECTION RULES - CRITICAL]
@@ -130,6 +149,10 @@ IMPORTANT:
 - Use JOIN if necessary to preserve relational correctness
 - Avoid synthetic SELECT ... FROM DUAL unless absolutely necessary
 
+HARD RULE:
+- If bind_target_hints_json has any target columns, DUAL-only/literal-only strategy is FORBIDDEN.
+- At least one direct target column from bind_target_hints_json must be referenced in the generated SQL.
+
 If dynamic conditions exist:
 - Target 2~3 distinct cases
 
@@ -162,6 +185,9 @@ If all parameters cannot be realistically populated:
 
 - Use last_error ONLY to avoid repeating the same mistake
 - DO NOT over-correct or drastically change strategy
+- Apply error_feedback_reference as high-priority guardrails for recurring errors/corrections.
+- Use feedback_examples_json as human correction hints when similar patterns exist.
+- If feedback_examples_json is irrelevant to current SQL, ignore it.
 
 =====================================
 [FINAL CHECK BEFORE OUTPUT]
@@ -173,5 +199,6 @@ Ensure:
 - Query is executable
 - Values come from real tables
 - Row count <= 3
+- If bind_target_hints_json has entries, SQL references at least one hinted target column and is not DUAL-only literal SQL
 
 Now generate the SQL.

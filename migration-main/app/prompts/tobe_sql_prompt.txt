@@ -13,8 +13,11 @@ Binding placeholder policy (strict):
 - Keep `#{{...}}` and `${{...}}` as-is in output SQL.
 - Do not replace them with `:name`, `?`, `@p1`, or any non-MyBatis style.
 
-mapping_rules_json from NEXT_MIG_INFO:
+mapping_rules_json from NEXT_MIG_INFO + NEXT_MIG_INFO_DTL:
 {mapping_rules_json}
+Each item represents a column mapping pair:
+- FR_TABLE / FR_COL -> TO_TABLE / TO_COL
+- MAP_TYPE may be blank and should not be treated as meaningful.
 
 feedback_examples_json from NEXT_SQL_INFO.EDITED_YN/CORRECT_SQL:
 {feedback_examples_json}
@@ -31,7 +34,7 @@ Rules:
 - Do not convert bind placeholders to Oracle/client bind styles such as `:name`, `?`, or `@p1`.
 - Use source_sql as the primary source SQL.
 - If EDIT_FR_SQL is present, source_sql already reflects include-expanded SQL.
-- Use mapping_rules_json as conversion guidance.
+- Use mapping_rules_json as conversion guidance, focusing on FR/TO table+column mappings.
 - Use feedback_examples_json as human feedback hints.
 - If last_error is not None, fix that issue in the new SQL.
 - Keep the original SQL structure and apply only necessary migration edits (table/column/function/type conversion).

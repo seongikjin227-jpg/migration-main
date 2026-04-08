@@ -55,7 +55,6 @@ def get_pending_jobs() -> list[SqlInfoJob]:
         FROM {table}
         WHERE USE_YN = 'Y'
           AND TARGET_YN = 'Y'
-          AND UPPER(TRIM(TAG_KIND)) = 'SELECT'
         ORDER BY UPD_TS NULLS FIRST, TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID)
     """
 
@@ -72,7 +71,7 @@ def update_cycle_result(
     row_id: str,
     tobe_sql: str,
     bind_sql: str,
-    bind_set: str,
+    bind_set: str | None,
     test_sql: str,
     status: str,
     final_log: str,
@@ -174,10 +173,16 @@ def get_feedback_examples(job: SqlInfoJob, limit: int = 5) -> list[dict[str, str
     return examples
 
 
-def _fit_payload_to_column_limits(table: str, values: dict[str, str]) -> dict[str, str]:
+def _fit_payload_to_column_limits(
+    table: str,
+    values: dict[str, str | None],
+) -> dict[str, str | None]:
     lengths = _get_column_data_lengths(table)
-    fitted: dict[str, str] = {}
+    fitted: dict[str, str | None] = {}
     for column, value in values.items():
+        if value is None:
+            fitted[column] = None
+            continue
         limit = lengths.get(column.upper())
         text = _to_text(value, default="")
         fitted[column] = _truncate_utf8_by_bytes(text, limit) if limit else text

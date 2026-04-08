@@ -15,8 +15,14 @@ tobe_sql:
 bind_set_json (array of bind cases):
 {bind_set_json}
 
+feedback_examples_json:
+{feedback_examples_json}
+
 last_error:
 {last_error}
+
+error_feedback_reference:
+{error_feedback_reference}
 
 =====================================
 [STRICT OUTPUT RULES]
@@ -38,12 +44,18 @@ last_error:
 - Replace ONLY bind parameter placeholders with literal values from bind_set_json.
 - Do NOT replace table names, join structure, predicates, or business logic.
 - Do NOT collapse to simplified surrogate queries (for example, `SELECT COUNT(*) FROM table` only).
+- Do NOT create synthetic bind tables/CTEs such as `BIND_CASES`, `PARAM_CASES`, or equivalent.
 
 In other words:
 - For each bind case, execute COUNT(*) over:
   - source_sql with placeholders resolved using that case
   - tobe_sql with placeholders resolved using that case
 - Then return CASE_NO, FROM_COUNT, TO_COUNT.
+- Apply error_feedback_reference as high-priority guardrails for recurring errors/corrections.
+- Use feedback_examples_json as human correction hints when similar mistakes/patterns are present.
+- If feedback_examples_json is irrelevant to current SQL, ignore it.
+- If there are no bind parameters in source_sql/tobe_sql, or bind_set_json is empty:
+  generate exactly one comparison row (CASE_NO = 1) using original source_sql and tobe_sql bodies.
 
 =====================================
 [MYBATIS HANDLING]
@@ -67,10 +79,17 @@ In other words:
 =====================================
 [RECOMMENDED QUERY SHAPE]
 =====================================
-Use one statement with CTE + UNION ALL (or equivalent) so each case produces one row:
+Use one statement with UNION ALL so each case produces one row:
 - CASE_NO
 - FROM_COUNT
 - TO_COUNT
+
+Preferred shape (conceptual):
+- `SELECT <case_no> AS CASE_NO,`
+- `       (SELECT COUNT(*) FROM (<source_sql resolved for this case>)) AS FROM_COUNT,`
+- `       (SELECT COUNT(*) FROM (<tobe_sql resolved for this case>))   AS TO_COUNT`
+- `FROM DUAL`
+- `UNION ALL ...`
 
 Large SQL is acceptable and expected if source_sql/tobe_sql are long.
 Do not shorten by dropping logic.
@@ -83,3 +102,4 @@ Ensure:
 - Row count equals number of bind cases in bind_set_json.
 - source_sql/tobe_sql logic is preserved except placeholder/tag resolution.
 - Statement is executable in Oracle.
+- No synthetic bind-table CTE (for example `BIND_CASES`) exists.

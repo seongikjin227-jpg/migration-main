@@ -6,6 +6,10 @@ from typing import Any
 _BIND_TOKEN_PATTERN = re.compile(r"[#$]\{\s*([^}]+?)\s*\}")
 _IF_TEST_PATTERN = re.compile(r"<if\b[^>]*\btest\s*=\s*['\"](.*?)['\"][^>]*>", re.IGNORECASE | re.DOTALL)
 _IDENTIFIER_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_\.]*)\b")
+_DIRECT_BIND_COMPARISON_PATTERN = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_\.]*)\s*(?:=|<>|!=|>=|<=|>|<|LIKE|IN)\s*[#$]\{\s*([^}]+?)\s*\}",
+    re.IGNORECASE,
+)
 
 _RESERVED_WORDS = {
     "and",
@@ -107,13 +111,59 @@ def _value_signature(bind_case: dict[str, Any]) -> tuple:
 def _synthesize_case_from_base(base_case: dict[str, Any], group: list[str], active: bool) -> dict[str, Any]:
     synthetic = dict(base_case)
     if active:
-        for param in group:
-            if synthetic.get(param) is None:
-                synthetic[param] = "Y"
+        return synthetic
     else:
         for param in group:
             synthetic[param] = None
     return synthetic
+
+
+def _extract_direct_bind_column_map(sql_text: str) -> dict[str, list[str]]:
+    if not sql_text:
+        return {}
+    mapped: dict[str, list[str]] = {}
+    for match in _DIRECT_BIND_COMPARISON_PATTERN.finditer(sql_text):
+        column_name = match.group(1).strip()
+        param_name = _normalize_param_name(match.group(2))
+        if not param_name or not column_name:
+            continue
+        if param_name not in mapped:
+            mapped[param_name] = []
+        if column_name not in mapped[param_name]:
+            mapped[param_name].append(column_name)
+    return mapped
+
+
+def build_bind_target_hints(tobe_sql: str, source_sql: str) -> dict[str, list[str]]:
+    """
+    Return bind parameter -> candidate physical column map from direct SQL comparisons.
+    Priority: TO-BE SQL first, then SOURCE SQL as fallback for missing params.
+    """
+    merged = _extract_direct_bind_column_map(tobe_sql)
+    fallback = _extract_direct_bind_column_map(source_sql)
+    for param, columns in fallback.items():
+        if param not in merged:
+            merged[param] = list(columns)
+            continue
+        for column_name in columns:
+            if column_name not in merged[param]:
+                merged[param].append(column_name)
+    return merged
+
+
+def _build_non_null_value_pool(
+    param_names: list[str],
+    bind_query_rows: list[dict[str, Any]],
+) -> dict[str, list[Any]]:
+    pool: dict[str, list[Any]] = {param: [] for param in param_names}
+    for row in bind_query_rows:
+        for param in param_names:
+            value = _first_matching_value(row, param)
+            if value is None:
+                continue
+            if value not in pool[param]:
+                pool[param].append(value)
+    return pool
 
 
 def build_bind_sets(
@@ -130,6 +180,7 @@ def build_bind_sets(
         return []
 
     if_groups = _extract_if_param_groups(tobe_sql)
+    value_pool = _build_non_null_value_pool(param_names, bind_query_rows)
     selected: list[dict[str, Any]] = []
     seen_value_signatures = set()
     seen_if_signatures = set()
@@ -168,6 +219,9 @@ def build_bind_sets(
                     return selected
 
             active_case = _synthesize_case_from_base(base, group, active=True)
+            for param in group:
+                if active_case.get(param) is None and value_pool.get(param):
+                    active_case[param] = value_pool[param][0]
             active_sig = _signature_for_case(active_case, if_groups)
             active_value_sig = _value_signature(active_case)
             if active_sig not in seen_if_signatures and active_value_sig not in seen_value_signatures:

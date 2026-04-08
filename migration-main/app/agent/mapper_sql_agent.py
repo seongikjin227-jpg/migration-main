@@ -10,9 +10,13 @@ from app.repositories.result_repository import (
     update_cycle_result,
 )
 from app.runtime import is_stop_requested
-from app.services.binding_service import bind_sets_to_json, build_bind_sets
+from app.services.binding_service import bind_sets_to_json, build_bind_sets, extract_bind_param_names
 from app.services.llm_service import generate_bind_sql, generate_test_sql, generate_tobe_sql
-from app.services.validation_service import evaluate_status_from_test_rows, execute_binding_query, execute_test_query
+from app.services.validation_service import (
+    evaluate_status_from_test_rows,
+    execute_binding_query,
+    execute_test_query,
+)
 
 
 class MigrationOrchestrator:
@@ -38,7 +42,8 @@ class MigrationOrchestrator:
                 logger.info(f"[Orchestrator] Stop requested ({job_key}). Aborting job.")
                 return
             stage = "INIT"
-            bind_set_json = "[]"
+            bind_set_json_for_test = "[]"
+            bind_set_for_db = None
             try:
                 stage = "LOAD_RULES"
                 mapping_rules = get_all_mapping_rules()
@@ -70,7 +75,7 @@ class MigrationOrchestrator:
                         row_id=job.row_id,
                         tobe_sql=tobe_sql,
                         bind_sql="",
-                        bind_set="[]",
+                        bind_set=None,
                         test_sql="",
                         status=status,
                         final_log=final_log,
@@ -81,36 +86,50 @@ class MigrationOrchestrator:
                     )
                     return
 
-                stage = "GENERATE_BIND_SQL"
-                bind_sql = generate_bind_sql(
-                    job=job,
-                    tobe_sql=tobe_sql,
-                    mapping_rules=mapping_rules,
-                    last_error=last_error,
-                )
-                log_stage(stage, "completed", f"(sql_length={len(bind_sql)})")
-                stage = "EXECUTE_BIND_SQL"
-                bind_query_rows = execute_binding_query(bind_sql, max_rows=50)
-                log_stage(stage, "completed", f"(rows={len(bind_query_rows)})")
-                stage = "BUILD_BIND_SET"
-                bind_sets = build_bind_sets(
-                    tobe_sql=tobe_sql,
-                    source_sql=job.source_sql,
-                    bind_query_rows=bind_query_rows,
-                    max_cases=3,
-                )
-                bind_set_json = bind_sets_to_json(bind_sets)
-                log_stage(stage, "completed", f"(cases={len(bind_sets)})")
-                logger.info(
-                    f"[Orchestrator] ({job.space_nm}.{job.sql_id}) bind cases prepared: {bind_set_json}"
-                )
+                bind_param_names = extract_bind_param_names(tobe_sql)
+                if not bind_param_names:
+                    bind_param_names = extract_bind_param_names(job.source_sql)
+
+                if not bind_param_names:
+                    stage = "SKIP_BIND_FOR_NO_PARAMS"
+                    bind_sql = ""
+                    bind_set_json_for_test = "[]"
+                    bind_set_for_db = None
+                    log_stage(stage, "completed", "(reason=no_bind_params)")
+                else:
+                    stage = "GENERATE_BIND_SQL"
+                    bind_sql = generate_bind_sql(
+                        job=job,
+                        tobe_sql=tobe_sql,
+                        mapping_rules=mapping_rules,
+                        last_error=last_error,
+                        feedback_examples=feedback_examples,
+                    )
+                    log_stage(stage, "completed", f"(sql_length={len(bind_sql)})")
+                    stage = "EXECUTE_BIND_SQL"
+                    bind_query_rows = execute_binding_query(bind_sql, max_rows=50)
+                    log_stage(stage, "completed", f"(rows={len(bind_query_rows)})")
+                    stage = "BUILD_BIND_SET"
+                    bind_sets = build_bind_sets(
+                        tobe_sql=tobe_sql,
+                        source_sql=job.source_sql,
+                        bind_query_rows=bind_query_rows,
+                        max_cases=3,
+                    )
+                    bind_set_json_for_test = bind_sets_to_json(bind_sets)
+                    bind_set_for_db = bind_set_json_for_test
+                    log_stage(stage, "completed", f"(cases={len(bind_sets)})")
+                    logger.info(
+                        f"[Orchestrator] ({job.space_nm}.{job.sql_id}) bind cases prepared: {bind_set_json_for_test}"
+                    )
 
                 stage = "GENERATE_TEST_SQL"
                 test_sql = generate_test_sql(
                     job=job,
                     tobe_sql=tobe_sql,
-                    bind_set_json=bind_set_json,
+                    bind_set_json=bind_set_json_for_test,
                     last_error=last_error,
+                    feedback_examples=feedback_examples,
                 )
                 log_stage(stage, "completed", f"(sql_length={len(test_sql)})")
                 stage = "EXECUTE_TEST_SQL"
@@ -132,7 +151,7 @@ class MigrationOrchestrator:
                     row_id=job.row_id,
                     tobe_sql=tobe_sql,
                     bind_sql=bind_sql,
-                    bind_set=bind_set_json,
+                    bind_set=bind_set_for_db,
                     test_sql=test_sql,
                     status=status,
                     final_log=final_log,
@@ -161,7 +180,7 @@ class MigrationOrchestrator:
                 )
                 if stage in {"GENERATE_TEST_SQL", "EXECUTE_TEST_SQL", "EVALUATE_STATUS"}:
                     logger.error(
-                        f"[Orchestrator] ({job.space_nm}.{job.sql_id}) bind cases at failure: {bind_set_json}"
+                        f"[Orchestrator] ({job.space_nm}.{job.sql_id}) bind cases at failure: {bind_set_json_for_test}"
                     )
                 time.sleep(1)
 

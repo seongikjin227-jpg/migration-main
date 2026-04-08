@@ -33,7 +33,7 @@ class SqlInfoJob:
 
 @dataclass
 class MappingRuleItem:
-    """Single mapping-rule row loaded from NEXT_MIG_INFO."""
+    """Single mapping-rule row loaded from NEXT_MIG_INFO + NEXT_MIG_INFO_DTL."""
 
     map_type: str
     fr_table: str

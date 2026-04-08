@@ -10,11 +10,13 @@ from langchain_openai import ChatOpenAI
 
 from app.exceptions import LLMRateLimitError
 from app.models import MappingRuleItem, SqlInfoJob
-from app.services.prompt_service import render_prompt
+from app.services.binding_service import build_bind_target_hints
+from app.services.prompt_service import load_prompt_template, render_prompt
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(ROOT_DIR / ".env")
+ERROR_FEEDBACK_REFERENCE = load_prompt_template("error_feedback_reference.txt")
 
 
 def _env_or_value(value: str | None, env_name: str) -> str:
@@ -72,7 +74,9 @@ def build_bind_sql_messages(
     tobe_sql: str,
     mapping_rules: list[MappingRuleItem],
     last_error: str | None = None,
+    feedback_examples: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
+    bind_target_hints = build_bind_target_hints(tobe_sql=tobe_sql, source_sql=job.source_sql)
     merged_prompt = render_prompt(
         "bind_sql_prompt.txt",
         tag_kind=job.tag_kind or "None",
@@ -80,8 +84,11 @@ def build_bind_sql_messages(
         sql_id=job.sql_id,
         source_sql=job.source_sql,
         tobe_sql=tobe_sql,
+        bind_target_hints_json=json.dumps(bind_target_hints, ensure_ascii=False),
         mapping_rules_json=_serialize_mapping_rules(mapping_rules),
+        feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
         last_error=last_error or "None",
+        error_feedback_reference=ERROR_FEEDBACK_REFERENCE,
     )
     return [
         {"role": "system", "content": merged_prompt},
@@ -93,6 +100,7 @@ def build_test_sql_messages(
     tobe_sql: str,
     bind_set_json: str,
     last_error: str | None = None,
+    feedback_examples: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     merged_prompt = render_prompt(
         "test_sql_prompt.txt",
@@ -102,7 +110,9 @@ def build_test_sql_messages(
         source_sql=job.source_sql,
         tobe_sql=tobe_sql,
         bind_set_json=bind_set_json,
+        feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
         last_error=last_error or "None",
+        error_feedback_reference=ERROR_FEEDBACK_REFERENCE,
     )
     return [
         {"role": "system", "content": merged_prompt},
@@ -254,6 +264,7 @@ def generate_bind_sql(
     tobe_sql: str,
     mapping_rules: list[MappingRuleItem],
     last_error: str | None = None,
+    feedback_examples: list[dict[str, str]] | None = None,
 ) -> str:
     return call_llm_api(
         api_key=None,
@@ -264,6 +275,7 @@ def generate_bind_sql(
             tobe_sql=tobe_sql,
             mapping_rules=mapping_rules,
             last_error=last_error,
+            feedback_examples=feedback_examples,
         ),
     )
 
@@ -273,6 +285,7 @@ def generate_test_sql(
     tobe_sql: str,
     bind_set_json: str,
     last_error: str | None = None,
+    feedback_examples: list[dict[str, str]] | None = None,
 ) -> str:
     return call_llm_api(
         api_key=None,
@@ -283,5 +296,6 @@ def generate_test_sql(
             tobe_sql=tobe_sql,
             bind_set_json=bind_set_json,
             last_error=last_error,
+            feedback_examples=feedback_examples,
         ),
     )
