@@ -19,8 +19,6 @@ class SqlInfoJob:
     test_sql: Optional[str] = None
     status: Optional[str] = None
     log_text: Optional[str] = None
-    use_yn: Optional[str] = None
-    target_yn: Optional[str] = None
     upd_ts: Optional[datetime] = None
     edited_yn: Optional[str] = None
     correct_sql: Optional[str] = None

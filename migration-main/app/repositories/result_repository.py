@@ -36,25 +36,22 @@ def _row_to_sql_info_job(row) -> SqlInfoJob:
         test_sql=_to_optional_text(row[9]),
         status=_to_optional_text(row[10]),
         log_text=_to_optional_text(row[11]),
-        use_yn=row[12],
-        target_yn=row[13],
-        upd_ts=row[14],
-        edited_yn=_to_optional_text(row[15]),
-        correct_sql=_to_optional_text(row[16]),
+        upd_ts=row[12],
+        edited_yn=_to_optional_text(row[13]),
+        correct_sql=_to_optional_text(row[14]),
     )
 
 
 def get_pending_jobs() -> list[SqlInfoJob]:
-    """Load pending jobs from NEXT_SQL_INFO."""
+    """Load retry 대상 jobs from NEXT_SQL_INFO (STATUS='FAIL')."""
     table = get_result_table()
     query = f"""
         SELECT ROWIDTOCHAR(ROWID) AS RID,
                TAG_KIND, SPACE_NM, SQL_ID, FR_SQL_TEXT, EDIT_FR_SQL,
                TO_SQL_TEXT, BIND_SQL, BIND_SET, TEST_SQL, STATUS, LOG,
-               USE_YN, TARGET_YN, UPD_TS, EDITED_YN, CORRECT_SQL
+               UPD_TS, EDITED_YN, CORRECT_SQL
         FROM {table}
-        WHERE USE_YN = 'Y'
-          AND TARGET_YN = 'Y'
+        WHERE UPPER(TRIM(STATUS)) = 'FAIL'
         ORDER BY UPD_TS NULLS FIRST, TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID)
     """
 
@@ -96,7 +93,6 @@ def update_cycle_result(
             TEST_SQL = :4,
             STATUS = :5,
             LOG = :6,
-            TARGET_YN = 'N',
             UPD_TS = CURRENT_TIMESTAMP
         WHERE ROWID = CHARTOROWID(:7)
     """
@@ -114,29 +110,6 @@ def update_cycle_result(
                 row_id,
             ],
         )
-        conn.commit()
-
-
-def finalize_failed_job(row_id: str, status: str, final_log: str):
-    table = get_result_table()
-    payload = _fit_payload_to_column_limits(
-        table=table,
-        values={
-            "STATUS": status,
-            "LOG": final_log,
-        },
-    )
-    query = f"""
-        UPDATE {table}
-        SET STATUS = :1,
-            LOG = :2,
-            TARGET_YN = 'N',
-            UPD_TS = CURRENT_TIMESTAMP
-        WHERE ROWID = CHARTOROWID(:3)
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, [payload["STATUS"], payload["LOG"], row_id])
         conn.commit()
 
 

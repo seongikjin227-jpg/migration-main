@@ -43,9 +43,6 @@ def execute_binding_query(binding_query_sql: str, max_rows: int = 20) -> list[di
         bind_item: dict[str, Any] = {}
         for idx, column in enumerate(columns):
             bind_item[column] = row[idx]
-            lowered = column.lower()
-            if lowered not in bind_item:
-                bind_item[lowered] = row[idx]
         bind_sets.append(bind_item)
     return bind_sets
 
@@ -71,7 +68,6 @@ def execute_test_query(test_sql: str) -> list[dict[str, Any]]:
         item: dict[str, Any] = {}
         for idx, col in enumerate(columns):
             item[col] = row[idx]
-            item[col.lower()] = row[idx]
         result.append(item)
     return result
 
@@ -85,9 +81,19 @@ def _to_int_or_none(value) -> int | None:
         return None
 
 
+def _get_value_case_insensitive(row: dict[str, Any], key: str):
+    if key in row:
+        return row[key]
+    lowered = key.lower()
+    for existing_key, value in row.items():
+        if str(existing_key).lower() == lowered:
+            return value
+    return None
+
+
 def evaluate_status_from_test_rows(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        return "FAIL(from count : NULL, to count : NULL)"
+        return "FAIL"
 
     required_cols = {"case_no", "from_count", "to_count"}
     sample_keys = {str(key).lower() for key in rows[0].keys()}
@@ -98,36 +104,27 @@ def evaluate_status_from_test_rows(rows: list[dict[str, Any]]) -> str:
         )
 
     all_match = True
-    first_match_value = None
-    first_mismatch: tuple[int | None, int | None] | None = None
 
     for row in rows:
-        from_count = _to_int_or_none(row.get("from_count", row.get("FROM_COUNT")))
-        to_count = _to_int_or_none(row.get("to_count", row.get("TO_COUNT")))
+        from_count = _to_int_or_none(_get_value_case_insensitive(row, "from_count"))
+        to_count = _to_int_or_none(_get_value_case_insensitive(row, "to_count"))
 
         if from_count is None or to_count is None:
             all_match = False
-            if first_mismatch is None:
-                first_mismatch = (from_count, to_count)
+            continue
+
+        # 0 vs 0 means both sides found no data; treat this as validation failure.
+        if from_count == 0 and to_count == 0:
+            all_match = False
             continue
 
         if from_count != to_count:
             all_match = False
-            if first_mismatch is None:
-                first_mismatch = (from_count, to_count)
-        elif first_match_value is None:
-            first_match_value = from_count
 
     if all_match:
-        display = first_match_value if first_match_value is not None else 0
-        return f"PASS(both count = {display})"
+        return "PASS"
 
-    from_display = "NULL"
-    to_display = "NULL"
-    if first_mismatch is not None:
-        from_display = "NULL" if first_mismatch[0] is None else str(first_mismatch[0])
-        to_display = "NULL" if first_mismatch[1] is None else str(first_mismatch[1])
-    return f"FAIL(from count : {from_display}, to count : {to_display})"
+    return "FAIL"
 
 
 def _prepare_runtime_sql(sql_text: str, stage: str) -> str:

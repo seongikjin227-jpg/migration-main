@@ -1,41 +1,31 @@
-You are an Oracle SQL migration expert for MyBatis mapper SQL.
+당신은 Oracle/MyBatis SQL 마이그레이션 작업자입니다.
 
-Generate TO-BE SQL for this NEXT_SQL_INFO row.
-
-TAG_KIND: {tag_kind}
-SPACE_NM: {space_nm}
-SQL_ID: {sql_id}
-
-source_sql (EDIT_FR_SQL if exists, else FR_SQL_TEXT):
+입력:
+- TAG_KIND: {tag_kind}
+- SPACE_NM: {space_nm}
+- SQL_ID: {sql_id}
+- source_sql:
 {source_sql}
-
-Binding placeholder policy (strict):
-- Keep `#{{...}}` and `${{...}}` as-is in output SQL.
-- Do not replace them with `:name`, `?`, `@p1`, or any non-MyBatis style.
-
-mapping_rules_json from NEXT_MIG_INFO + NEXT_MIG_INFO_DTL:
+- mapping_rules_json:
 {mapping_rules_json}
-Each item represents a column mapping pair:
-- FR_TABLE / FR_COL -> TO_TABLE / TO_COL
-- MAP_TYPE may be blank and should not be treated as meaningful.
-
-feedback_examples_json from NEXT_SQL_INFO.EDITED_YN/CORRECT_SQL:
+- feedback_examples_json:
 {feedback_examples_json}
-
-last_error:
+- last_error:
 {last_error}
 
-Rules:
-- Return executable Oracle SQL only.
-- Return one TO-BE SQL statement only.
-- Do not return markdown, comments, JSON, or explanations.
-- SQL must remain MyBatis-compatible.
-- Preserve MyBatis binding placeholders exactly: `#{{...}}` and `${{...}}`.
-- Do not convert bind placeholders to Oracle/client bind styles such as `:name`, `?`, or `@p1`.
-- Use source_sql as the primary source SQL.
-- If EDIT_FR_SQL is present, source_sql already reflects include-expanded SQL.
-- Use mapping_rules_json as conversion guidance, focusing on FR/TO table+column mappings.
-- Use feedback_examples_json as human feedback hints.
-- If last_error is not None, fix that issue in the new SQL.
-- Keep the original SQL structure and apply only necessary migration edits (table/column/function/type conversion).
-- For very long SQL, avoid unnecessary rewrites/reformatting; do minimal-diff conversion to reduce generation latency/timeouts.
+작업:
+- source_sql 기준으로 TO-BE SQL 1문장 생성
+- 매핑은 FR_TABLE/FR_COL -> TO_TABLE/TO_COL 기준으로 적용
+- 구조는 최대한 유지하고 필요한 변경만 수행(minimal diff)
+
+필수 규칙:
+- 출력은 실행 가능한 Oracle SQL 1문장만
+- 설명/주석/markdown/json 금지
+- MyBatis placeholder `#{{...}}`, `${{...}}` 그대로 유지
+- placeholder를 `:name`, `?`, `@p1` 등으로 바꾸지 말 것
+- last_error와 feedback_examples_json에 같은 패턴 오류가 있으면 우선 교정
+- mapping_rules_json에 매핑이 존재하면 FR_TABLE/FR_COL 이름을 그대로 두지 말고 TO_TABLE/TO_COL로 치환
+- source_sql과 다르더라도 신규 스키마 컬럼명(예: NEW_ORDER_ID)으로 반드시 반영
+- 테이블/컬럼 매핑 누락 의심 구간은 임의 추정하지 말고 원본 구조를 유지한 채 최소 변경
+- SELECT 컬럼 alias는 기본적으로 제거
+- 단, 기존 MyBatis 결과 매핑(resultMap/DTO/호출 규약) 호환이 명확히 필요한 경우에만 기존 alias 유지

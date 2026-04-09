@@ -108,16 +108,6 @@ def _value_signature(bind_case: dict[str, Any]) -> tuple:
     return tuple((k, bind_case.get(k)) for k in sorted(bind_case.keys()))
 
 
-def _synthesize_case_from_base(base_case: dict[str, Any], group: list[str], active: bool) -> dict[str, Any]:
-    synthetic = dict(base_case)
-    if active:
-        return synthetic
-    else:
-        for param in group:
-            synthetic[param] = None
-    return synthetic
-
-
 def _extract_direct_bind_column_map(sql_text: str) -> dict[str, list[str]]:
     if not sql_text:
         return {}
@@ -151,21 +141,6 @@ def build_bind_target_hints(tobe_sql: str, source_sql: str) -> dict[str, list[st
     return merged
 
 
-def _build_non_null_value_pool(
-    param_names: list[str],
-    bind_query_rows: list[dict[str, Any]],
-) -> dict[str, list[Any]]:
-    pool: dict[str, list[Any]] = {param: [] for param in param_names}
-    for row in bind_query_rows:
-        for param in param_names:
-            value = _first_matching_value(row, param)
-            if value is None:
-                continue
-            if value not in pool[param]:
-                pool[param].append(value)
-    return pool
-
-
 def build_bind_sets(
     tobe_sql: str,
     source_sql: str,
@@ -180,7 +155,6 @@ def build_bind_sets(
         return []
 
     if_groups = _extract_if_param_groups(tobe_sql)
-    value_pool = _build_non_null_value_pool(param_names, bind_query_rows)
     selected: list[dict[str, Any]] = []
     seen_value_signatures = set()
     seen_if_signatures = set()
@@ -205,32 +179,6 @@ def build_bind_sets(
             if len(selected) >= safe_max:
                 return selected
 
-    if if_groups and selected and len(selected) < safe_max:
-        base = selected[0]
-        for group in if_groups:
-            inactive_case = _synthesize_case_from_base(base, group, active=False)
-            inactive_sig = _signature_for_case(inactive_case, if_groups)
-            inactive_value_sig = _value_signature(inactive_case)
-            if inactive_sig not in seen_if_signatures and inactive_value_sig not in seen_value_signatures:
-                selected.append(inactive_case)
-                seen_if_signatures.add(inactive_sig)
-                seen_value_signatures.add(inactive_value_sig)
-                if len(selected) >= safe_max:
-                    return selected
-
-            active_case = _synthesize_case_from_base(base, group, active=True)
-            for param in group:
-                if active_case.get(param) is None and value_pool.get(param):
-                    active_case[param] = value_pool[param][0]
-            active_sig = _signature_for_case(active_case, if_groups)
-            active_value_sig = _value_signature(active_case)
-            if active_sig not in seen_if_signatures and active_value_sig not in seen_value_signatures:
-                selected.append(active_case)
-                seen_if_signatures.add(active_sig)
-                seen_value_signatures.add(active_value_sig)
-                if len(selected) >= safe_max:
-                    return selected
-
     if len(selected) < safe_max:
         for row in bind_query_rows:
             bind_case = _build_bind_case(param_names, row)
@@ -244,11 +192,6 @@ def build_bind_sets(
 
     if not selected:
         selected = [{param: None for param in param_names}]
-
-    if not if_groups and len(selected) < safe_max:
-        base_case = dict(selected[0])
-        while len(selected) < safe_max:
-            selected.append(dict(base_case))
 
     return selected
 
