@@ -91,6 +91,9 @@ def _normalize_table_name(token: str) -> str:
     value = value.strip('"').strip("'")
     if not value:
         return ""
+    # Ignore non-table noise tokens such as '-', '--', separators.
+    if not re.search(r"[A-Za-z0-9_]", value):
+        return ""
     return value.upper()
 
 
@@ -212,36 +215,35 @@ def parse_mapper_dir_to_json(
 
     total_items = 0
     written_files = 0
-    dedupe_keys = set()
     for xml_file in xml_files:
         items = parse_single_mapper_xml(xml_file)
+        if not items:
+            continue
+
+        json_rows: list[dict[str, Any]] = []
         for item in items:
             total_items += 1
-            key = (item.space_nm, item.sql_id)
             full_id = f"{item.space_nm}.{item.sql_id}".upper()
             item.target_table = target_table_map.get(full_id, [])
+            json_rows.append(item.to_json_payload())
 
-            if key in dedupe_keys:
-                logger.warning(
-                    f"[XMLParser] Duplicate SPACE_NM.SQL_ID found; keeping latest file value ({item.space_nm}.{item.sql_id})"
-                )
-            dedupe_keys.add(key)
-
-            file_name = f"{_safe_filename_component(item.space_nm)}.{_safe_filename_component(item.sql_id)}.json"
-            file_path = out_dir / file_name
-            file_path.write_text(
-                json.dumps(item.to_json_payload(), ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            written_files += 1
+        rel_path = xml_file.relative_to(source_path).as_posix()
+        file_stem = rel_path.rsplit(".", 1)[0].replace("/", "__")
+        file_name = f"{_safe_filename_component(file_stem)}.json"
+        file_path = out_dir / file_name
+        file_path.write_text(
+            json.dumps(json_rows, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        written_files += 1
 
     logger.info(
-        f"[XMLParser] Stage1 completed (parsed_items={total_items}, json_written={written_files}, out_dir={out_dir})"
+        f"[XMLParser] Stage1 completed (parsed_items={total_items}, json_files={written_files}, out_dir={out_dir})"
     )
     return {
         "xml_files": len(xml_files),
         "parsed_items": total_items,
-        "json_written": written_files,
+        "json_files": written_files,
     }
 
 
@@ -250,8 +252,16 @@ def _load_json_payloads(data_dir: str | None = None) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     for file_path in sorted(root.glob("*.json")):
         try:
-            payload = json.loads(file_path.read_text(encoding="utf-8"))
-            payloads.append(payload)
+            raw = json.loads(file_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                payloads.append(raw)
+                continue
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, dict):
+                        payloads.append(item)
+                continue
+            logger.warning(f"[XMLParser] Unsupported JSON root type skipped: {file_path}")
         except Exception as exc:
             logger.warning(f"[XMLParser] Invalid JSON skipped: {file_path} ({exc})")
     return payloads
@@ -591,15 +601,15 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
             deleted_not_in_test_mapping += 1
             continue
 
-        has_overlap = False
+        all_mapped = True
         for target_table in target_tables:
             table_key = target_table.upper()
             table_short = table_key.split(".")[-1]
-            if table_key in test_mapping_tables or table_short in test_mapping_tables:
-                has_overlap = True
+            if table_key not in test_mapping_tables and table_short not in test_mapping_tables:
+                all_mapped = False
                 break
 
-        if not has_overlap:
+        if not all_mapped:
             to_delete_rowids.append(_to_text(rowid))
             deleted_not_in_test_mapping += 1
 
@@ -612,16 +622,24 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
             )
             conn.commit()
 
+    remaining_total = 0
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT COUNT(*) FROM {result_table}")
+        remaining_total = int(cursor.fetchone()[0] or 0)
+
     logger.info(
         "[XMLParser] Stage4 completed "
         f"(deleted_total={len(to_delete_rowids)}, "
         f"deleted_not_active={deleted_not_active}, "
-        f"deleted_not_in_test_mapping={deleted_not_in_test_mapping})"
+        f"deleted_not_in_test_mapping={deleted_not_in_test_mapping}, "
+        f"remaining_total={remaining_total})"
     )
     return {
         "deleted_total": len(to_delete_rowids),
         "deleted_not_active": deleted_not_active,
         "deleted_not_in_test_mapping": deleted_not_in_test_mapping,
+        "remaining_total": remaining_total,
     }
 
 
