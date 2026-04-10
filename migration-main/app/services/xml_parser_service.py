@@ -145,6 +145,17 @@ def _resolve_output_dir(output_dir: str | None = None) -> Path:
     return resolved
 
 
+def _cleanup_output_json_files(output_dir: Path) -> int:
+    removed = 0
+    for file_path in output_dir.glob("*.json"):
+        try:
+            file_path.unlink()
+            removed += 1
+        except Exception as exc:
+            logger.warning(f"[XMLParser] Failed to remove old JSON file: {file_path} ({exc})")
+    return removed
+
+
 def _parse_target_tables_from_active_columns(*values: Any) -> list[str]:
     results: list[str] = []
     seen = set()
@@ -209,9 +220,12 @@ def parse_mapper_dir_to_json(
         raise ValueError(f"Mapper source directory does not exist: {source_path}")
 
     out_dir = _resolve_output_dir(output_dir)
+    removed_json = _cleanup_output_json_files(out_dir)
     xml_files = sorted(source_path.rglob("*.xml"))
     target_table_map = _load_target_table_map_from_active_table()
-    logger.info(f"[XMLParser] Stage1 started (source={source_path}, files={len(xml_files)})")
+    logger.info(
+        f"[XMLParser] Stage1 started (source={source_path}, files={len(xml_files)}, removed_old_json={removed_json})"
+    )
 
     total_items = 0
     written_files = 0
@@ -267,13 +281,21 @@ def _load_json_payloads(data_dir: str | None = None) -> list[dict[str, Any]]:
     return payloads
 
 
+def _count_json_files(data_dir: str | None = None) -> int:
+    root = _resolve_output_dir(data_dir)
+    return len(list(root.glob("*.json")))
+
+
 def upsert_json_to_next_sql_info(data_dir: str | None = None) -> dict[str, int]:
     table = get_result_table()
+    json_file_count = _count_json_files(data_dir)
     payloads = _load_json_payloads(data_dir)
-    logger.info(f"[XMLParser] Stage2 started (json_files={len(payloads)})")
+    logger.info(
+        f"[XMLParser] Stage2 started (json_files={json_file_count}, payloads={len(payloads)})"
+    )
 
     if not payloads:
-        return {"upserted": 0}
+        return {"json_files": json_file_count, "payloads": 0, "upserted": 0}
 
     merge_sql = f"""
         MERGE INTO {table} T
@@ -342,8 +364,10 @@ def upsert_json_to_next_sql_info(data_dir: str | None = None) -> dict[str, int]:
 
         conn.commit()
 
-    logger.info(f"[XMLParser] Stage2 completed (upserted={upserted})")
-    return {"upserted": upserted}
+    logger.info(
+        f"[XMLParser] Stage2 completed (json_files={json_file_count}, payloads={len(payloads)}, upserted={upserted})"
+    )
+    return {"json_files": json_file_count, "payloads": len(payloads), "upserted": upserted}
 
 
 def _parse_refid(refid: str, current_space: str) -> tuple[str, str]:
