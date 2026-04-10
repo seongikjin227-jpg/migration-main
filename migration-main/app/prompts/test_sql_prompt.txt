@@ -14,8 +14,6 @@
 {feedback_examples_json}
 - last_error:
 {last_error}
-- error_feedback_reference:
-{error_feedback_reference}
 
 작업:
 - bind case별로 source_sql vs tobe_sql COUNT 비교 SQL 1문장 생성

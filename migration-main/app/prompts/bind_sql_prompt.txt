@@ -16,13 +16,12 @@
 {feedback_examples_json}
 - last_error:
 {last_error}
-- error_feedback_reference:
-{error_feedback_reference}
 
 작업:
 - bind parameter 후보 조회용 Oracle SQL 1문장 생성
 - 결과 각 row = 1 bind set
 - 결과 컬럼 alias = parameter name 정확히 일치
+- 실제 운영 테이블을 조회해서 bind 후보를 생성
 
 필수 규칙:
 - SQL 1문장만 출력 (설명/주석/markdown/json 금지)
@@ -31,7 +30,16 @@
 - `tobe_sql` 우선 분석, 부족하면 `source_sql` 참고
 - bind_target_hints_json target 컬럼이 있으면 실제 SQL에서 최소 1개 이상 참조
 - target 컬럼이 있을 때 DUAL-only/literal-only SQL 금지
+- `FROM DUAL` 금지
+- 결과 컬럼(alias)의 값이 모두 상수/리터럴만 되지 않도록 할 것
+- `SELECT DISTINCT '1' AS ...`, `SELECT DISTINCT 'N' AS ...` 같은 패턴 절대 금지
+- 최소 1개 이상 컬럼은 실제 테이블 컬럼/표현식(테이블 컬럼 기반)으로 산출
 - 불가피하면 낮은 우선순위 parameter는 NULL 허용
 - 동일 bind set(모든 parameter alias 값이 동일한 행)은 중복 제거
 - 중복 제거를 위해 SELECT DISTINCT 또는 동등한 방식(ROW_NUMBER 필터링) 사용
 - 결과 1행은 반드시 1개의 유니크 bind set이어야 함
+
+출력 형식 계약(반드시 준수):
+- 최종 응답은 SQL 한 문장만
+- 설명문, 번호목록, 코드펜스, 주석 금지
+- 실패 사유를 쓰지 말고 규칙을 만족하는 SQL만 출력

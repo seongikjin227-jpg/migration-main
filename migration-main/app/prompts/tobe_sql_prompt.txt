@@ -8,6 +8,8 @@
 {source_sql}
 - mapping_rules_json:
 {mapping_rules_json}
+- required_mappings_json:
+{required_mappings_json}
 - feedback_examples_json:
 {feedback_examples_json}
 - last_error:
@@ -17,15 +19,34 @@
 - source_sql 기준으로 TO-BE SQL 1문장 생성
 - 매핑은 FR_TABLE/FR_COL -> TO_TABLE/TO_COL 기준으로 적용
 - 구조는 최대한 유지하고 필요한 변경만 수행(minimal diff)
+- mapping_rules_json에서 source_sql에 실제 등장하는 FR_TABLE/FR_COL은 누락 없이 TO_TABLE/TO_COL로 치환
+- required_mappings_json에 있는 항목은 반드시 적용 (누락 금지)
 
 필수 규칙:
 - 출력은 실행 가능한 Oracle SQL 1문장만
 - 설명/주석/markdown/json 금지
+- 응답은 SQL 본문만 출력 (앞뒤 안내문/사족/따옴표/코드펜스 절대 금지)
+- SQL 내부 문자열 리터럴을 제외하고 `;`(세미콜론) 금지
+- `BEGIN`, `DECLARE`, `END`, `EXCEPTION` 등 PL/SQL 블록 문법 금지
+- `SELECT 1)`, `1.`, `참고:`, `설명:` 같은 목록/설명 시작 패턴 금지
 - MyBatis placeholder `#{{...}}`, `${{...}}` 그대로 유지
 - placeholder를 `:name`, `?`, `@p1` 등으로 바꾸지 말 것
 - last_error와 feedback_examples_json에 같은 패턴 오류가 있으면 우선 교정
 - mapping_rules_json에 매핑이 존재하면 FR_TABLE/FR_COL 이름을 그대로 두지 말고 TO_TABLE/TO_COL로 치환
+- required_mappings_json의 FR_TABLE/FR_COL이 SQL에 남아 있으면 오답
 - source_sql과 다르더라도 신규 스키마 컬럼명(예: NEW_ORDER_ID)으로 반드시 반영
 - 테이블/컬럼 매핑 누락 의심 구간은 임의 추정하지 말고 원본 구조를 유지한 채 최소 변경
 - SELECT 컬럼 alias는 기본적으로 제거
 - 단, 기존 MyBatis 결과 매핑(resultMap/DTO/호출 규약) 호환이 명확히 필요한 경우에만 기존 alias 유지
+- 매핑되지 않은 FR_TABLE/FR_COL이 source_sql에 남아있다면, 가능한 범위 내에서 반드시 치환 후 출력
+
+출력 형식 계약(반드시 준수):
+- 최종 응답은 "SQL 한 문장"만 포함해야 함
+- 여러 문장/여러 쿼리/UNRELATED 텍스트가 섞이면 안 됨
+- 실패 시에도 사유를 쓰지 말고, 규칙을 만족하는 SQL만 재작성해서 출력
+
+응답 전 자체 검증 체크리스트:
+1. 내가 쓰는 응답 전체가 SQL 한 문장인가?
+2. SQL 문자열 리터럴 바깥에 `;`가 존재하지 않는가?
+3. 설명문/주석/코드펜스/번호목록이 전혀 없는가?
+4. placeholder가 원문 표기(`#{{...}}`, `${{...}}`) 그대로 유지되는가?

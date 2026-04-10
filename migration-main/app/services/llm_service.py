@@ -11,12 +11,11 @@ from langchain_openai import ChatOpenAI
 from app.exceptions import LLMRateLimitError
 from app.models import MappingRuleItem, SqlInfoJob
 from app.services.binding_service import build_bind_target_hints
-from app.services.prompt_service import load_prompt_template, render_prompt
+from app.services.prompt_service import render_prompt
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(ROOT_DIR / ".env")
-ERROR_FEEDBACK_REFERENCE = load_prompt_template("error_feedback_reference.txt")
 
 
 def _env_or_value(value: str | None, env_name: str) -> str:
@@ -42,6 +41,66 @@ def _serialize_mapping_rules(mapping_rules: list[MappingRuleItem]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _normalize_mapping_token(token: str) -> str:
+    return (token or "").strip().strip('"').strip("'")
+
+
+def _token_occurs(sql_text: str, token: str) -> bool:
+    normalized_token = _normalize_mapping_token(token)
+    if not normalized_token:
+        return False
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_$#]){re.escape(normalized_token)}(?![A-Za-z0-9_$#])",
+        flags=re.IGNORECASE,
+    )
+    return bool(pattern.search(sql_text or ""))
+
+
+def _filter_relevant_mapping_rules(source_sql: str, mapping_rules: list[MappingRuleItem]) -> list[MappingRuleItem]:
+    relevant: list[MappingRuleItem] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for rule in mapping_rules:
+        fr_table = _normalize_mapping_token(rule.fr_table)
+        fr_col = _normalize_mapping_token(rule.fr_col)
+        if not fr_table and not fr_col:
+            continue
+        if not (_token_occurs(source_sql, fr_table) or _token_occurs(source_sql, fr_col)):
+            continue
+        key = (
+            fr_table.upper(),
+            fr_col.upper(),
+            _normalize_mapping_token(rule.to_table).upper(),
+            _normalize_mapping_token(rule.to_col).upper(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        relevant.append(rule)
+    return relevant
+
+
+def _serialize_required_mapping_pairs(mapping_rules: list[MappingRuleItem]) -> str:
+    if not mapping_rules:
+        return "[]"
+    pairs: list[dict[str, str]] = []
+    for rule in mapping_rules:
+        fr_table = _normalize_mapping_token(rule.fr_table)
+        fr_col = _normalize_mapping_token(rule.fr_col)
+        to_table = _normalize_mapping_token(rule.to_table)
+        to_col = _normalize_mapping_token(rule.to_col)
+        if not (fr_table or fr_col):
+            continue
+        pairs.append(
+            {
+                "FR_TABLE": fr_table,
+                "FR_COL": fr_col,
+                "TO_TABLE": to_table,
+                "TO_COL": to_col,
+            }
+        )
+    return json.dumps(pairs, ensure_ascii=False)
+
+
 def _serialize_feedback_examples(feedback_examples: list[dict[str, str]]) -> str:
     if not feedback_examples:
         return "[]"
@@ -54,13 +113,15 @@ def build_tobe_sql_messages(
     last_error: str | None = None,
     feedback_examples: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
+    relevant_rules = _filter_relevant_mapping_rules(job.source_sql, mapping_rules)
     merged_prompt = render_prompt(
         "tobe_sql_prompt.txt",
         tag_kind=job.tag_kind or "None",
         space_nm=job.space_nm,
         sql_id=job.sql_id,
         source_sql=job.source_sql,
-        mapping_rules_json=_serialize_mapping_rules(mapping_rules),
+        mapping_rules_json=_serialize_mapping_rules(relevant_rules),
+        required_mappings_json=_serialize_required_mapping_pairs(relevant_rules),
         feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
         last_error=last_error or "None",
     )
@@ -76,6 +137,7 @@ def build_bind_sql_messages(
     last_error: str | None = None,
     feedback_examples: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
+    relevant_rules = _filter_relevant_mapping_rules(job.source_sql, mapping_rules)
     bind_target_hints = build_bind_target_hints(tobe_sql=tobe_sql, source_sql=job.source_sql)
     merged_prompt = render_prompt(
         "bind_sql_prompt.txt",
@@ -85,10 +147,9 @@ def build_bind_sql_messages(
         source_sql=job.source_sql,
         tobe_sql=tobe_sql,
         bind_target_hints_json=json.dumps(bind_target_hints, ensure_ascii=False),
-        mapping_rules_json=_serialize_mapping_rules(mapping_rules),
+        mapping_rules_json=_serialize_mapping_rules(relevant_rules),
         feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
         last_error=last_error or "None",
-        error_feedback_reference=ERROR_FEEDBACK_REFERENCE,
     )
     return [
         {"role": "system", "content": merged_prompt},
@@ -112,7 +173,6 @@ def build_test_sql_messages(
         bind_set_json=bind_set_json,
         feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
         last_error=last_error or "None",
-        error_feedback_reference=ERROR_FEEDBACK_REFERENCE,
     )
     return [
         {"role": "system", "content": merged_prompt},
@@ -266,7 +326,7 @@ def generate_bind_sql(
     last_error: str | None = None,
     feedback_examples: list[dict[str, str]] | None = None,
 ) -> str:
-    return call_llm_api(
+    generated = call_llm_api(
         api_key=None,
         model=None,
         base_url=None,
@@ -278,6 +338,30 @@ def generate_bind_sql(
             feedback_examples=feedback_examples,
         ),
     )
+    _validate_bind_sql_quality(generated)
+    return generated
+
+
+def _validate_bind_sql_quality(sql_text: str) -> None:
+    normalized = re.sub(r"\s+", " ", (sql_text or "")).strip()
+    if not normalized:
+        raise ValueError("BIND SQL is empty.")
+    lowered = normalized.lower()
+    if re.search(r"\bfrom\s+dual\b", lowered):
+        raise ValueError("BIND SQL must read from real tables; FROM DUAL is not allowed.")
+    if " from " not in f" {lowered} ":
+        raise ValueError("BIND SQL must include FROM clause with real table access.")
+    literal_projection_pattern = re.compile(
+        r"^\s*select\s+(?:distinct\s+)?"
+        r"(?:'[^']*'|-?\d+(?:\.\d+)?|null)(?:\s+as\s+[a-zA-Z_][\w$#]*)?"
+        r"(?:\s*,\s*(?:'[^']*'|-?\d+(?:\.\d+)?|null)(?:\s+as\s+[a-zA-Z_][\w$#]*)?)*"
+        r"\s+from\b",
+        flags=re.IGNORECASE,
+    )
+    if literal_projection_pattern.match(normalized):
+        raise ValueError(
+            "BIND SQL projection cannot be literal-only. Select actual table-derived columns."
+        )
 
 
 def generate_test_sql(
