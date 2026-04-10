@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 
 import oracledb
 
-from app.config import get_connection, get_mapping_rule_table, get_result_table
+from app.config import get_connection, get_result_table
 from app.logger import logger
 
 
@@ -94,59 +94,6 @@ def _normalize_table_name(token: str) -> str:
     return value.upper()
 
 
-def _extract_from_clause_tables(sql_text: str) -> list[str]:
-    extracted: list[str] = []
-    for match in re.finditer(
-        r"\bFROM\b\s+(.*?)(?=\bWHERE\b|\bGROUP\b|\bORDER\b|\bCONNECT\b|\bSTART\b|\bUNION\b|$)",
-        sql_text,
-        flags=re.IGNORECASE | re.DOTALL,
-    ):
-        clause = match.group(1)
-        for segment in clause.split(","):
-            head = segment.strip()
-            if not head or head.startswith("("):
-                continue
-            token = head.split()[0]
-            normalized = _normalize_table_name(token)
-            if normalized:
-                extracted.append(normalized)
-    return extracted
-
-
-def extract_target_tables(sql_text: str) -> list[str]:
-    if not sql_text:
-        return []
-
-    scrubbed = re.sub(r"<[^>]+>", " ", sql_text)
-    scrubbed = re.sub(r"[#$]\{\s*[^}]+?\s*\}", " ", scrubbed)
-    scrubbed = re.sub(r"\s+", " ", scrubbed).strip()
-
-    candidates: list[str] = []
-    candidates.extend(_extract_from_clause_tables(scrubbed))
-
-    keyword_patterns = [
-        r"\bJOIN\b\s+([A-Za-z0-9_.$#\"]+)",
-        r"\bUPDATE\b\s+([A-Za-z0-9_.$#\"]+)",
-        r"\bINSERT\s+INTO\b\s+([A-Za-z0-9_.$#\"]+)",
-        r"\bDELETE\s+FROM\b\s+([A-Za-z0-9_.$#\"]+)",
-        r"\bMERGE\s+INTO\b\s+([A-Za-z0-9_.$#\"]+)",
-        r"\bUSING\b\s+([A-Za-z0-9_.$#\"]+)",
-    ]
-    for pattern in keyword_patterns:
-        for match in re.finditer(pattern, scrubbed, flags=re.IGNORECASE):
-            normalized = _normalize_table_name(match.group(1))
-            if normalized:
-                candidates.append(normalized)
-
-    deduped: list[str] = []
-    seen = set()
-    for table_name in candidates:
-        if table_name not in seen:
-            deduped.append(table_name)
-            seen.add(table_name)
-    return deduped
-
-
 def parse_single_mapper_xml(xml_path: Path) -> list[ParsedSqlItem]:
     try:
         tree = ET.parse(xml_path)
@@ -171,14 +118,13 @@ def parse_single_mapper_xml(xml_path: Path) -> list[ParsedSqlItem]:
             continue
 
         sql_text = _inner_xml(elem)
-        target_tables = extract_target_tables(sql_text)
         parsed_items.append(
             ParsedSqlItem(
                 tag_kind=local_name.upper(),
                 space_nm=namespace,
                 sql_id=sql_id,
                 fr_sql_text=sql_text,
-                target_table=target_tables,
+                target_table=[],
                 source_file=str(xml_path),
             )
         )
@@ -196,6 +142,61 @@ def _resolve_output_dir(output_dir: str | None = None) -> Path:
     return resolved
 
 
+def _parse_target_tables_from_active_columns(*values: Any) -> list[str]:
+    results: list[str] = []
+    seen = set()
+    for value in values:
+        text = _to_text(value).strip()
+        if not text:
+            continue
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                tokens = [str(item) for item in parsed]
+            else:
+                tokens = re.split(r"[,\s;|]+", text)
+        except Exception:
+            tokens = re.split(r"[,\s;|]+", text)
+
+        for token in tokens:
+            normalized = _normalize_table_name(token)
+            if not normalized or normalized in seen:
+                continue
+            results.append(normalized)
+            seen.add(normalized)
+    return results
+
+
+def _load_target_table_map_from_active_table() -> dict[str, list[str]]:
+    active_table = _validate_sql_identifier(_require_env("ACTIVE_SQL_ID_TABLE"))
+    active_column = _validate_sql_identifier(os.getenv("ACTIVE_SQL_ID_COLUMN", "SQL_ID"))
+
+    query = f"""
+        SELECT TO_CHAR({active_column}),
+               C_TABLES, R_TABLES, U_TABLES, D_TABLES
+        FROM {active_table}
+    """
+    mapped: dict[str, list[str]] = {}
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        for row in cursor.fetchall():
+            full_id = _to_text(row[0]).strip().upper()
+            if not full_id:
+                continue
+            tables = _parse_target_tables_from_active_columns(row[1], row[2], row[3], row[4])
+            if full_id in mapped:
+                existing = mapped[full_id]
+                seen = set(existing)
+                for table_name in tables:
+                    if table_name not in seen:
+                        existing.append(table_name)
+                        seen.add(table_name)
+            else:
+                mapped[full_id] = tables
+    return mapped
+
+
 def parse_mapper_dir_to_json(
     source_dir: str | None = None,
     output_dir: str | None = None,
@@ -206,6 +207,7 @@ def parse_mapper_dir_to_json(
 
     out_dir = _resolve_output_dir(output_dir)
     xml_files = sorted(source_path.rglob("*.xml"))
+    target_table_map = _load_target_table_map_from_active_table()
     logger.info(f"[XMLParser] Stage1 started (source={source_path}, files={len(xml_files)})")
 
     total_items = 0
@@ -216,6 +218,9 @@ def parse_mapper_dir_to_json(
         for item in items:
             total_items += 1
             key = (item.space_nm, item.sql_id)
+            full_id = f"{item.space_nm}.{item.sql_id}".upper()
+            item.target_table = target_table_map.get(full_id, [])
+
             if key in dedupe_keys:
                 logger.warning(
                     f"[XMLParser] Duplicate SPACE_NM.SQL_ID found; keeping latest file value ({item.space_nm}.{item.sql_id})"
@@ -504,14 +509,47 @@ def _parse_stored_target_table(value: Any) -> list[str]:
     return items
 
 
+def _load_test_mapping_tables_from_env() -> set[str]:
+    """
+    Load test mapping tables from env var TEST_MAPPING_TABLES.
+    Accepted formats:
+    - comma/space/semicolon/pipe delimited string
+    - JSON array string
+    """
+    raw = _require_env("TEST_MAPPING_TABLES")
+    tokens: list[str] = []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            tokens = [str(item) for item in parsed]
+        else:
+            tokens = re.split(r"[,\s;|]+", raw)
+    except Exception:
+        tokens = re.split(r"[,\s;|]+", raw)
+
+    mapped: set[str] = set()
+    for token in tokens:
+        normalized = _normalize_table_name(token)
+        if not normalized:
+            continue
+        mapped.add(normalized)
+        if "." in normalized:
+            mapped.add(normalized.split(".")[-1])
+    if not mapped:
+        raise ValueError("TEST_MAPPING_TABLES is set but no valid table name was parsed.")
+    return mapped
+
+
 def cleanup_next_sql_info_rows() -> dict[str, int]:
     result_table = get_result_table()
-    mapping_table = get_mapping_rule_table()
     active_table = _validate_sql_identifier(_require_env("ACTIVE_SQL_ID_TABLE"))
     active_column = _validate_sql_identifier(os.getenv("ACTIVE_SQL_ID_COLUMN", "SQL_ID"))
+    test_mapping_tables = _load_test_mapping_tables_from_env()
 
     logger.info(
-        f"[XMLParser] Stage4 started (active_table={active_table}, active_column={active_column})"
+        "[XMLParser] Stage4 started "
+        f"(active_table={active_table}, active_column={active_column}, "
+        f"test_mapping_tables={len(test_mapping_tables)})"
     )
 
     active_ids: set[str] = set()
@@ -522,18 +560,6 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
             full_id = _to_text(value).strip()
             if full_id:
                 active_ids.add(full_id.upper())
-
-    mapped_tables: set[str] = set()
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT TO_CHAR(FR_TABLE) FROM {mapping_table}")
-        for (value,) in cursor.fetchall():
-            table_name = _normalize_table_name(_to_text(value))
-            if not table_name:
-                continue
-            mapped_tables.add(table_name)
-            if "." in table_name:
-                mapped_tables.add(table_name.split(".")[-1])
 
     rows: list[tuple[str, str, str, Any]] = []
     with get_connection() as conn:
@@ -548,7 +574,7 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
 
     to_delete_rowids: list[str] = []
     deleted_not_active = 0
-    deleted_unmapped = 0
+    deleted_not_in_test_mapping = 0
 
     for rowid, space_nm, sql_id, target_table_value in rows:
         space_text = _to_text(space_nm).strip()
@@ -561,18 +587,21 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
 
         target_tables = _parse_stored_target_table(target_table_value)
         if not target_tables:
+            to_delete_rowids.append(_to_text(rowid))
+            deleted_not_in_test_mapping += 1
             continue
-        has_unmapped = False
+
+        has_overlap = False
         for target_table in target_tables:
             table_key = target_table.upper()
             table_short = table_key.split(".")[-1]
-            if table_key not in mapped_tables and table_short not in mapped_tables:
-                has_unmapped = True
+            if table_key in test_mapping_tables or table_short in test_mapping_tables:
+                has_overlap = True
                 break
 
-        if has_unmapped:
+        if not has_overlap:
             to_delete_rowids.append(_to_text(rowid))
-            deleted_unmapped += 1
+            deleted_not_in_test_mapping += 1
 
     if to_delete_rowids:
         with get_connection() as conn:
@@ -586,12 +615,13 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
     logger.info(
         "[XMLParser] Stage4 completed "
         f"(deleted_total={len(to_delete_rowids)}, "
-        f"deleted_not_active={deleted_not_active}, deleted_unmapped={deleted_unmapped})"
+        f"deleted_not_active={deleted_not_active}, "
+        f"deleted_not_in_test_mapping={deleted_not_in_test_mapping})"
     )
     return {
         "deleted_total": len(to_delete_rowids),
         "deleted_not_active": deleted_not_active,
-        "deleted_unmapped": deleted_unmapped,
+        "deleted_not_in_test_mapping": deleted_not_in_test_mapping,
     }
 
 
