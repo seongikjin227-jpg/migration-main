@@ -110,7 +110,6 @@ class MigrationOrchestrator:
                     bind_sql = generate_bind_sql(
                         job=job,
                         tobe_sql=tobe_sql,
-                        mapping_rules=mapping_rules,
                         last_error=last_error,
                         feedback_examples=feedback_examples,
                     )

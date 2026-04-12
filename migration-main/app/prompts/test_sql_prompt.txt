@@ -1,9 +1,6 @@
 당신은 Oracle/MyBatis 검증 SQL 생성기입니다.
 
 입력:
-- TAG_KIND: {tag_kind}
-- SPACE_NM: {space_nm}
-- SQL_ID: {sql_id}
 - source_sql:
 {source_sql}
 - tobe_sql:
@@ -22,6 +19,7 @@
 - SQL 1문장만 출력 (설명/주석/markdown/json 금지)
 - SELECT only (CTE 허용)
 - 출력 컬럼 alias 고정: CASE_NO, FROM_COUNT, TO_COUNT
+- MyBatis 태그/placeholder(`<if`, `<where`, `#{...}`, `${...}`)가 출력 SQL에 남아 있으면 안 됨
 - bind case당 1행
 - bind_set_json에 bind case가 N개면 반드시 N행 생성 (누락 금지)
 - 각 case마다 source_sql과 tobe_sql 모두 동일한 bind parameter set으로 실행
