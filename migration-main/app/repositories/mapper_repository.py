@@ -1,3 +1,5 @@
+"""매핑 룰 조회 리포지토리."""
+
 from app.config import (
     get_connection,
     get_mapping_rule_detail_table,
@@ -7,6 +9,7 @@ from app.models import MappingRuleItem
 
 
 def _to_text(value, default: str = "") -> str:
+    """DB 드라이버 값(LOB 포함)을 문자열로 정규화한다."""
     if value is None:
         return default
     if hasattr(value, "read"):
@@ -19,7 +22,7 @@ def _to_text(value, default: str = "") -> str:
 
 
 def get_all_mapping_rules() -> list[MappingRuleItem]:
-    """Load mapping rules by joining NEXT_MIG_INFO and NEXT_MIG_INFO_DTL."""
+    """NEXT_MIG_INFO + DTL 조인으로 전체 매핑 룰을 읽어온다."""
     map_table = get_mapping_rule_table()
     detail_table = get_mapping_rule_detail_table()
     query = f"""

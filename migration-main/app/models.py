@@ -1,3 +1,5 @@
+"""리포지토리/오케스트레이션 계층에서 공통으로 사용하는 도메인 모델."""
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -5,7 +7,7 @@ from typing import Optional
 
 @dataclass
 class SqlInfoJob:
-    """Work item loaded from NEXT_SQL_INFO."""
+    """NEXT_SQL_INFO에서 읽어온 작업 1건."""
 
     row_id: str
     tag_kind: str
@@ -25,13 +27,14 @@ class SqlInfoJob:
 
     @property
     def source_sql(self) -> str:
+        """개발자 보정 SQL(EDIT_FR_SQL)을 우선 사용하고, 없으면 원본 SQL을 사용한다."""
         edited = (self.edit_fr_sql or "").strip()
         return edited if edited else (self.fr_sql_text or "")
 
 
 @dataclass
 class MappingRuleItem:
-    """Single mapping-rule row loaded from NEXT_MIG_INFO + NEXT_MIG_INFO_DTL."""
+    """NEXT_MIG_INFO + DTL 조인 결과의 매핑 룰 1건."""
 
     map_type: str
     fr_table: str

@@ -1,3 +1,5 @@
+"""NEXT_SQL_INFO 작업 조회/결과 저장 리포지토리."""
+
 from app.config import get_connection, get_result_table
 from app.models import SqlInfoJob
 
@@ -5,6 +7,7 @@ _COLUMN_LENGTH_CACHE: dict[str, dict[str, int]] = {}
 
 
 def _to_text(value, default: str = "") -> str:
+    """DB 드라이버 값(LOB 포함)을 문자열로 정규화한다."""
     if value is None:
         return default
     if hasattr(value, "read"):
@@ -17,12 +20,14 @@ def _to_text(value, default: str = "") -> str:
 
 
 def _to_optional_text(value) -> str | None:
+    """NULL은 None으로 유지하고, 값이 있으면 문자열로 변환한다."""
     if value is None:
         return None
     return _to_text(value)
 
 
 def _row_to_sql_info_job(row) -> SqlInfoJob:
+    """DB row 튜플을 SqlInfoJob으로 매핑한다."""
     return SqlInfoJob(
         row_id=row[0],
         tag_kind=_to_text(row[1]),
@@ -43,7 +48,7 @@ def _row_to_sql_info_job(row) -> SqlInfoJob:
 
 
 def get_pending_jobs() -> list[SqlInfoJob]:
-    """Load retry 대상 jobs from NEXT_SQL_INFO (STATUS='FAIL')."""
+    """재처리 대상(`STATUS='FAIL'`) 작업 목록을 조회한다."""
     table = get_result_table()
     query = f"""
         SELECT ROWIDTOCHAR(ROWID) AS RID,
@@ -73,6 +78,7 @@ def update_cycle_result(
     status: str,
     final_log: str,
 ):
+    """ROWID 기준으로 산출물/상태/로그를 갱신한다."""
     table = get_result_table()
     payload = _fit_payload_to_column_limits(
         table=table,
@@ -114,9 +120,7 @@ def update_cycle_result(
 
 
 def get_feedback_examples(job: SqlInfoJob, limit: int = 5) -> list[dict[str, str]]:
-    """
-    Build feedback examples from NEXT_SQL_INFO.EDITED_YN and CORRECT_SQL.
-    """
+    """동일 (SPACE_NM, SQL_ID)의 최근 수동보정 예시를 조회한다."""
     table = get_result_table()
     safe_limit = max(1, min(limit, 20))
     query = f"""
@@ -146,10 +150,62 @@ def get_feedback_examples(job: SqlInfoJob, limit: int = 5) -> list[dict[str, str
     return examples
 
 
+def get_feedback_corpus_rows(limit: int = 2000) -> list[dict[str, str]]:
+    """RAG 인덱싱용 정답 SQL 코퍼스를 조회한다.
+
+    - 사람이 수정했거나(`EDITED_YN='Y'`) 정답 SQL(`CORRECT_SQL`)이 있는 데이터만 대상.
+    - 코퍼스 동기화 비용을 제어하기 위해 limit 상한을 둔다.
+    """
+    table = get_result_table()
+    safe_limit = max(1, min(limit, 20000))
+    query = f"""
+        SELECT ROWIDTOCHAR(ROWID) AS RID,
+               TO_CHAR(SPACE_NM),
+               TO_CHAR(SQL_ID),
+               FR_SQL_TEXT,
+               EDIT_FR_SQL,
+               TO_SQL_TEXT,
+               CORRECT_SQL,
+               EDITED_YN,
+               UPD_TS
+        FROM (
+            SELECT ROWIDTOCHAR(ROWID) AS RID,
+                   SPACE_NM, SQL_ID, FR_SQL_TEXT, EDIT_FR_SQL, TO_SQL_TEXT,
+                   CORRECT_SQL, EDITED_YN, UPD_TS
+            FROM {table}
+            WHERE (EDITED_YN = 'Y' OR CORRECT_SQL IS NOT NULL)
+              AND CORRECT_SQL IS NOT NULL
+            ORDER BY UPD_TS DESC
+        )
+        WHERE ROWNUM <= {safe_limit}
+    """
+
+    rows: list[dict[str, str]] = []
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        for row in cursor.fetchall():
+            rows.append(
+                {
+                    "row_id": _to_text(row[0]),
+                    "space_nm": _to_text(row[1]),
+                    "sql_id": _to_text(row[2]),
+                    "fr_sql_text": _to_text(row[3]),
+                    "edit_fr_sql": _to_optional_text(row[4]) or "",
+                    "to_sql_text": _to_optional_text(row[5]) or "",
+                    "correct_sql": _to_text(row[6]),
+                    "edited_yn": _to_text(row[7]),
+                    "upd_ts": _to_text(row[8]),
+                }
+            )
+    return rows
+
+
 def _fit_payload_to_column_limits(
     table: str,
     values: dict[str, str | None],
 ) -> dict[str, str | None]:
+    """비 LOB 컬럼은 byte 길이를 맞춰 잘라 저장 실패를 방지한다."""
     lengths = _get_column_data_lengths(table)
     fitted: dict[str, str | None] = {}
     for column, value in values.items():
@@ -163,6 +219,7 @@ def _fit_payload_to_column_limits(
 
 
 def _get_column_data_lengths(table: str) -> dict[str, int]:
+    """USER_TAB_COLUMNS에서 컬럼 길이를 읽어 캐시한다."""
     normalized_table = table.upper()
     if normalized_table in _COLUMN_LENGTH_CACHE:
         return _COLUMN_LENGTH_CACHE[normalized_table]
@@ -179,7 +236,7 @@ def _get_column_data_lengths(table: str) -> dict[str, int]:
         for col_name, data_type, data_length in cursor.fetchall():
             col = _to_text(col_name).upper()
             dtype = _to_text(data_type).upper()
-            # Do not truncate LOB columns.
+            # CLOB은 길이 자르기를 적용하지 않는다.
             if "CLOB" in dtype:
                 continue
             try:
@@ -192,6 +249,7 @@ def _get_column_data_lengths(table: str) -> dict[str, int]:
 
 
 def _truncate_utf8_by_bytes(text: str, byte_limit: int) -> str:
+    """UTF-8 byte 기준으로 문자열을 잘라 유효한 문자 경계를 유지한다."""
     if byte_limit <= 0:
         return ""
     encoded = text.encode("utf-8", errors="ignore")

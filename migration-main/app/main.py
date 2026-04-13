@@ -1,3 +1,9 @@
+"""배치 프로세스 엔트리포인트.
+
+1분 주기로 DB 폴링 스케줄러를 실행하며,
+시그널(SIGINT/SIGTERM) 기반으로 안전 종료를 처리한다.
+"""
+
 import logging
 import os
 import signal
@@ -15,11 +21,14 @@ from app.runtime import clear_stop, request_stop
 
 
 class _SkipMaxInstancesLogFilter(logging.Filter):
+    """APScheduler의 max_instances 경고 로그를 필터링한다."""
+
     def filter(self, record: logging.LogRecord) -> bool:
         return "maximum number of running instances reached" not in record.getMessage().lower()
 
 
 def _attach_filter_to_logger_and_handlers(logger_name: str, log_filter: logging.Filter) -> None:
+    """지정 logger와 하위 handler에 동일 필터를 등록한다."""
     target = logging.getLogger(logger_name)
     target.addFilter(log_filter)
     for handler in target.handlers:
@@ -56,6 +65,7 @@ if __name__ == "__main__":
     signal_count = {"count": 0}
 
     def _handle_stop_signal(signum, _frame):
+        # 첫 번째 시그널은 안전 종료, 두 번째 시그널은 강제 종료로 처리한다.
         signal_count["count"] += 1
         request_stop()
         if signal_count["count"] == 1:

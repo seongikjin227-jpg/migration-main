@@ -1,3 +1,5 @@
+"""mapper XML을 파싱해 NEXT_SQL_INFO로 동기화하는 유틸 파이프라인."""
+
 from __future__ import annotations
 
 import argparse
@@ -45,6 +47,7 @@ class ParsedSqlItem:
 
 
 def _to_text(value: Any, default: str = "") -> str:
+    """DB/JSON 값을 안전하게 문자열로 정규화한다."""
     if value is None:
         return default
     if hasattr(value, "read"):
@@ -57,6 +60,7 @@ def _to_text(value: Any, default: str = "") -> str:
 
 
 def _require_env(name: str) -> str:
+    """필수 환경변수를 읽고 누락 시 즉시 예외를 발생시킨다."""
     value = os.getenv(name, "").strip()
     if not value:
         raise ValueError(f"Required environment variable '{name}' is not set.")
@@ -64,6 +68,7 @@ def _require_env(name: str) -> str:
 
 
 def _safe_filename_component(text: str) -> str:
+    """상대 경로를 파일시스템 안전한 파일명으로 변환한다."""
     return re.sub(r'[<>:"/\\|?*]+', "_", text.strip()) or "_"
 
 
@@ -75,6 +80,7 @@ def _local_tag_name(tag_name: str) -> str:
 
 
 def _inner_xml(element: ET.Element) -> str:
+    """자식 태그/테일을 포함한 inner XML 문자열을 추출한다."""
     parts: list[str] = []
     if element.text:
         parts.append(element.text)
@@ -86,9 +92,19 @@ def _inner_xml(element: ET.Element) -> str:
 
 
 def _normalize_table_name(token: str) -> str:
-    value = token.strip().strip(",").strip()
-    value = re.sub(r"[;)]*$", "", value)
-    value = value.strip('"').strip("'")
+    """자유형식 문자열/JSON에서 테이블명을 정규화해 대문자로 반환한다."""
+    value = token.strip()
+    if not value:
+        return ""
+
+    # 흔한 감싸기 문자/구분자 정리: ["SCHEMA.TB_A"], (TB_A), {TB_A}, TB_A;
+    value = value.strip().strip(",").strip(";")
+    value = value.strip('"').strip("'").strip()
+    value = value.strip("[](){}").strip()
+    value = value.strip('"').strip("'").strip()
+
+    # 잔여 접미 구두점 제거
+    value = re.sub(r"[;,]+$", "", value).strip()
     if not value:
         return ""
     # Ignore non-table noise tokens such as '-', '--', separators.
@@ -98,6 +114,7 @@ def _normalize_table_name(token: str) -> str:
 
 
 def parse_single_mapper_xml(xml_path: Path) -> list[ParsedSqlItem]:
+    """mapper XML 1개를 파싱해 ParsedSqlItem 목록으로 반환한다."""
     try:
         tree = ET.parse(xml_path)
     except ET.ParseError as exc:
@@ -136,6 +153,7 @@ def parse_single_mapper_xml(xml_path: Path) -> list[ParsedSqlItem]:
 
 
 def _resolve_output_dir(output_dir: str | None = None) -> Path:
+    """출력 디렉터리를 인자/환경변수/기본값 순서로 결정하고 생성한다."""
     if output_dir:
         resolved = Path(output_dir)
     else:
@@ -146,6 +164,7 @@ def _resolve_output_dir(output_dir: str | None = None) -> Path:
 
 
 def _cleanup_output_json_files(output_dir: Path) -> int:
+    """stage1 재생성 전에 기존 JSON 산출물을 정리한다."""
     removed = 0
     for file_path in output_dir.glob("*.json"):
         try:
@@ -157,20 +176,35 @@ def _cleanup_output_json_files(output_dir: Path) -> int:
 
 
 def _parse_target_tables_from_active_columns(*values: Any) -> list[str]:
+    """ACTIVE 테이블의 C/R/U/D 컬럼 문자열에서 테이블 목록을 파싱한다."""
     results: list[str] = []
     seen = set()
     for value in values:
-        text = _to_text(value).strip()
-        if not text:
+        if value is None:
             continue
-        try:
-            parsed = json.loads(text)
-            if isinstance(parsed, list):
-                tokens = [str(item) for item in parsed]
-            else:
+        # 값 타입이 리스트/튜플/셋이면 그대로 펼쳐서 사용한다.
+        if isinstance(value, (list, tuple, set)):
+            tokens = [str(item) for item in value]
+        else:
+            text = _to_text(value).strip()
+            if not text:
+                continue
+
+            # 1) JSON 배열 시도
+            # 2) 단일 JSON 문자열 시도
+            # 3) 실패 시 구분자 split
+            tokens: list[str] = []
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    tokens = [str(item) for item in parsed]
+                elif isinstance(parsed, str):
+                    tokens = [parsed]
+            except Exception:
+                tokens = []
+
+            if not tokens:
                 tokens = re.split(r"[,\s;|]+", text)
-        except Exception:
-            tokens = re.split(r"[,\s;|]+", text)
 
         for token in tokens:
             normalized = _normalize_table_name(token)
@@ -182,6 +216,7 @@ def _parse_target_tables_from_active_columns(*values: Any) -> list[str]:
 
 
 def _load_target_table_map_from_active_table() -> dict[str, list[str]]:
+    """ACTIVE SQL ID 테이블에서 full_id -> target_table[] 맵을 읽는다."""
     active_table = _validate_sql_identifier(_require_env("ACTIVE_SQL_ID_TABLE"))
     active_column = _validate_sql_identifier(os.getenv("ACTIVE_SQL_ID_COLUMN", "SQL_ID"))
 
@@ -191,12 +226,17 @@ def _load_target_table_map_from_active_table() -> dict[str, list[str]]:
         FROM {active_table}
     """
     mapped: dict[str, list[str]] = {}
+    invalid_ids: list[str] = []
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query)
         for row in cursor.fetchall():
             full_id = _to_text(row[0]).strip().upper()
             if not full_id:
+                continue
+            if "." not in full_id:
+                if len(invalid_ids) < 10:
+                    invalid_ids.append(full_id)
                 continue
             tables = _parse_target_tables_from_active_columns(row[1], row[2], row[3], row[4])
             if full_id in mapped:
@@ -208,6 +248,13 @@ def _load_target_table_map_from_active_table() -> dict[str, list[str]]:
                         seen.add(table_name)
             else:
                 mapped[full_id] = tables
+
+    if invalid_ids:
+        sample = ", ".join(invalid_ids[:5])
+        raise ValueError(
+            "ACTIVE_SQL_ID_COLUMN must contain full id format 'NAMESPACE.SQL_ID'. "
+            f"Invalid sample values: {sample}"
+        )
     return mapped
 
 
@@ -215,6 +262,7 @@ def parse_mapper_dir_to_json(
     source_dir: str | None = None,
     output_dir: str | None = None,
 ) -> dict[str, int]:
+    """Stage1: mapper XML 트리를 파싱해 파일별 JSON payload를 생성한다."""
     source_path = Path(source_dir or _require_env("MAPPER_XML_SOURCE_DIR"))
     if not source_path.exists() or not source_path.is_dir():
         raise ValueError(f"Mapper source directory does not exist: {source_path}")
@@ -262,6 +310,7 @@ def parse_mapper_dir_to_json(
 
 
 def _load_json_payloads(data_dir: str | None = None) -> list[dict[str, Any]]:
+    """stage1 JSON 파일들을 평탄화된 payload 목록으로 로드한다."""
     root = _resolve_output_dir(data_dir)
     payloads: list[dict[str, Any]] = []
     for file_path in sorted(root.glob("*.json")):
@@ -282,11 +331,13 @@ def _load_json_payloads(data_dir: str | None = None) -> list[dict[str, Any]]:
 
 
 def _count_json_files(data_dir: str | None = None) -> int:
+    """stage 로깅용 JSON 파일 개수를 반환한다."""
     root = _resolve_output_dir(data_dir)
     return len(list(root.glob("*.json")))
 
 
 def upsert_json_to_next_sql_info(data_dir: str | None = None) -> dict[str, int]:
+    """Stage2: stage1 payload를 NEXT_SQL_INFO에 MERGE upsert 한다."""
     table = get_result_table()
     json_file_count = _count_json_files(data_dir)
     payloads = _load_json_payloads(data_dir)
@@ -371,6 +422,7 @@ def upsert_json_to_next_sql_info(data_dir: str | None = None) -> dict[str, int]:
 
 
 def _parse_refid(refid: str, current_space: str) -> tuple[str, str]:
+    """include refid를 (namespace, sql_id) 형태로 해석한다."""
     clean_refid = (refid or "").strip()
     if not clean_refid:
         return current_space, clean_refid
@@ -392,6 +444,7 @@ def _resolve_include_text(
     stack: set[tuple[str, str]] | None = None,
     max_depth: int = 20,
 ) -> str:
+    """cycle guard를 적용해 `<include refid>`를 재귀적으로 해소한다."""
     resolved = sql_text
     active_stack = set(stack or set())
 
@@ -439,13 +492,14 @@ def _resolve_include_text(
 
 
 def expand_include_to_edit_sql() -> dict[str, int]:
+    """Stage3: include 확장 SQL을 EDIT_FR_SQL에 저장한다."""
     table = get_result_table()
     logger.info("[XMLParser] Stage3 started")
     fetch_sql = f"""
-        SELECT TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID), TO_CHAR(TAG_KIND), FR_SQL_TEXT
+        SELECT TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID), TO_CHAR(TAG_KIND), FR_SQL_TEXT, EDIT_FR_SQL
         FROM {table}
     """
-    rows: list[tuple[str, str, str, str]] = []
+    rows: list[tuple[str, str, str, str, str]] = []
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(fetch_sql)
@@ -456,25 +510,29 @@ def expand_include_to_edit_sql() -> dict[str, int]:
                     _to_text(row[1]).strip(),
                     _to_text(row[2]).strip().upper(),
                     _to_text(row[3]),
+                    _to_text(row[4]),
                 )
             )
 
     fragment_map: dict[tuple[str, str], str] = {}
-    for space_nm, sql_id, _tag_kind, fr_sql_text in rows:
-        fragment_map[(space_nm, sql_id)] = fr_sql_text
+    for space_nm, sql_id, _tag_kind, fr_sql_text, edit_fr_sql in rows:
+        base_sql = (edit_fr_sql or "").strip() or (fr_sql_text or "")
+        fragment_map[(space_nm, sql_id)] = base_sql
 
     updates: list[tuple[str, str, str]] = []
     include_candidates = 0
-    for space_nm, sql_id, _tag_kind, fr_sql_text in rows:
-        if "<include" not in fr_sql_text.lower():
+    for space_nm, sql_id, _tag_kind, fr_sql_text, edit_fr_sql in rows:
+        # EDIT_FR_SQL이 있으면 해당 SQL을 기준으로 include 확장을 진행한다.
+        base_sql = (edit_fr_sql or "").strip() or (fr_sql_text or "")
+        if "<include" not in base_sql.lower():
             continue
         include_candidates += 1
         resolved = _resolve_include_text(
-            sql_text=fr_sql_text,
+            sql_text=base_sql,
             current_space=space_nm,
             fragment_map=fragment_map,
         ).strip()
-        if resolved and resolved != fr_sql_text:
+        if resolved and resolved != base_sql:
             updates.append((resolved, space_nm, sql_id))
 
     if not updates:
@@ -511,6 +569,7 @@ def expand_include_to_edit_sql() -> dict[str, int]:
 
 
 def _validate_sql_identifier(name: str) -> str:
+    """유틸 SQL에서 식별자 인젝션을 막기 위해 허용 문자만 통과시킨다."""
     normalized = (name or "").strip()
     if not normalized:
         raise ValueError("SQL identifier is empty.")
@@ -520,6 +579,7 @@ def _validate_sql_identifier(name: str) -> str:
 
 
 def _parse_stored_target_table(value: Any) -> list[str]:
+    """TARGET_TABLE(JSON 배열/CSV 문자열)를 테이블 목록으로 복원한다."""
     text = _to_text(value).strip()
     if not text:
         return []
@@ -575,6 +635,7 @@ def _load_test_mapping_tables_from_env() -> set[str]:
 
 
 def cleanup_next_sql_info_rows() -> dict[str, int]:
+    """Stage4: 비활성/테스트매핑 범위 밖 행을 정리한다."""
     result_table = get_result_table()
     active_table = _validate_sql_identifier(_require_env("ACTIVE_SQL_ID_TABLE"))
     active_column = _validate_sql_identifier(os.getenv("ACTIVE_SQL_ID_COLUMN", "SQL_ID"))
@@ -586,14 +647,30 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
         f"test_mapping_tables={len(test_mapping_tables)})"
     )
 
-    active_ids: set[str] = set()
+    # ACTIVE 테이블은 반드시 full id(NAMESPACE.SQL_ID) 형식을 사용해야 한다.
+    # SQL_ID 단독 값은 namespace 충돌 위험이 있어 허용하지 않는다.
+    active_full_ids: set[str] = set()
+    invalid_ids: list[str] = []
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"SELECT TO_CHAR({active_column}) FROM {active_table}")
         for (value,) in cursor.fetchall():
-            full_id = _to_text(value).strip()
-            if full_id:
-                active_ids.add(full_id.upper())
+            raw_id = _to_text(value).strip()
+            if not raw_id:
+                continue
+            normalized = raw_id.upper()
+            if "." not in normalized:
+                if len(invalid_ids) < 10:
+                    invalid_ids.append(normalized)
+                continue
+            active_full_ids.add(normalized)
+
+    if invalid_ids:
+        sample = ", ".join(invalid_ids[:5])
+        raise ValueError(
+            "ACTIVE_SQL_ID_COLUMN must contain full id format 'NAMESPACE.SQL_ID'. "
+            f"Invalid sample values: {sample}"
+        )
 
     rows: list[tuple[str, str, str, Any]] = []
     with get_connection() as conn:
@@ -614,7 +691,7 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
         space_text = _to_text(space_nm).strip()
         sql_text = _to_text(sql_id).strip()
         full_id = f"{space_text}.{sql_text}".upper()
-        if full_id not in active_ids:
+        if full_id not in active_full_ids:
             to_delete_rowids.append(_to_text(rowid))
             deleted_not_active += 1
             continue
@@ -671,6 +748,7 @@ def run_all_xml_parser_stages(
     source_dir: str | None = None,
     output_dir: str | None = None,
 ) -> dict[str, dict[str, int]]:
+    """stage1~stage4를 순서대로 실행하고 통계를 반환한다."""
     stage1 = parse_mapper_dir_to_json(source_dir=source_dir, output_dir=output_dir)
     stage2 = upsert_json_to_next_sql_info(data_dir=output_dir)
     stage3 = expand_include_to_edit_sql()
@@ -684,6 +762,7 @@ def run_all_xml_parser_stages(
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
+    """단일 stage 또는 all 실행용 CLI 인자 파서를 만든다."""
     parser = argparse.ArgumentParser(description="MyBatis XML parser utility stages")
     parser.add_argument(
         "stage",
@@ -696,6 +775,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def _main():
+    """XML parser 유틸 CLI 진입점."""
     parser = _build_arg_parser()
     args = parser.parse_args()
 

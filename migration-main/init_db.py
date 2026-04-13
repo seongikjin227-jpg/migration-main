@@ -1,3 +1,20 @@
+"""통합 연결 점검 스크립트.
+
+점검 대상:
+1) Oracle DB 연결/필수 테이블 접근
+2) LLM API 연결 (models 엔드포인트 기준)
+3) 임베딩 API 연결 (샘플 임베딩 1건 생성)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from typing import Any
+
+import requests
+
 from app.config import (
     get_connection,
     get_mapping_rule_detail_table,
@@ -7,31 +24,202 @@ from app.config import (
 from app.logger import logger
 
 
+@dataclass
+class HealthResult:
+    """연결 점검 결과 1건."""
+
+    name: str
+    ok: bool
+    detail: str
+
+
+def _join_url(base_url: str, suffix: str) -> str:
+    """base URL 뒤에 suffix를 안전하게 붙인다."""
+    return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"
+
+
+def _extract_embedding_vectors(body: Any) -> list[list[float]]:
+    """임베딩 API 응답에서 벡터 목록을 파싱한다.
+
+    지원 형식:
+    - OpenAI 호환: {"data":[{"embedding":[...]}]}
+    - 일반 형식: {"embeddings":[[...],[...]]}
+    - 단일 벡터: {"embedding":[...]}
+    """
+    if isinstance(body, dict):
+        data = body.get("data")
+        if isinstance(data, list):
+            vectors = []
+            for item in data:
+                if isinstance(item, dict) and isinstance(item.get("embedding"), list):
+                    vectors.append([float(v) for v in item["embedding"]])
+            if vectors:
+                return vectors
+
+        embeddings = body.get("embeddings")
+        if isinstance(embeddings, list):
+            vectors = []
+            for item in embeddings:
+                if isinstance(item, list):
+                    vectors.append([float(v) for v in item])
+            if vectors:
+                return vectors
+
+        embedding = body.get("embedding")
+        if isinstance(embedding, list):
+            return [[float(v) for v in embedding]]
+
+    return []
+
+
+def check_oracle_connection() -> HealthResult:
+    """Oracle 연결과 필수 테이블 접근 여부를 점검한다."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            mapping_table = get_mapping_rule_table()
+            mapping_detail_table = get_mapping_rule_detail_table()
+            result_table = get_result_table()
+
+            cursor.execute(f"SELECT COUNT(*) FROM {mapping_table}")
+            mapping_count = int(cursor.fetchone()[0] or 0)
+
+            cursor.execute(f"SELECT COUNT(*) FROM {mapping_detail_table}")
+            mapping_detail_count = int(cursor.fetchone()[0] or 0)
+
+            cursor.execute(f"SELECT COUNT(*) FROM {result_table}")
+            result_count = int(cursor.fetchone()[0] or 0)
+
+        return HealthResult(
+            name="ORACLE",
+            ok=True,
+            detail=(
+                f"connected, {mapping_table}={mapping_count}, "
+                f"{mapping_detail_table}={mapping_detail_count}, {result_table}={result_count}"
+            ),
+        )
+    except Exception as exc:
+        return HealthResult(name="ORACLE", ok=False, detail=str(exc))
+
+
+def check_llm_connection(timeout_sec: int = 15) -> HealthResult:
+    """LLM API 접근 가능 여부를 점검한다.
+
+    기본 점검 경로:
+    - {LLM_BASE_URL}/models
+    """
+    base_url = os.getenv("LLM_BASE_URL", "").strip()
+    api_key = os.getenv("LLM_API_KEY", "").strip()
+    model = os.getenv("LLM_MODEL", "").strip()
+    if not base_url:
+        return HealthResult(name="LLM", ok=False, detail="LLM_BASE_URL is not set")
+    if not api_key:
+        return HealthResult(name="LLM", ok=False, detail="LLM_API_KEY is not set")
+
+    endpoint = _join_url(base_url, "models")
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    try:
+        response = requests.get(endpoint, headers=headers, timeout=timeout_sec)
+        if response.status_code >= 400:
+            return HealthResult(
+                name="LLM",
+                ok=False,
+                detail=f"HTTP {response.status_code} from {endpoint}: {response.text[:200]}",
+            )
+        body = response.json()
+        data = body.get("data") if isinstance(body, dict) else None
+        if isinstance(data, list):
+            sample = ""
+            if data and isinstance(data[0], dict):
+                sample = str(data[0].get("id") or "")
+            configured = f", configured_model={model}" if model else ""
+            return HealthResult(
+                name="LLM",
+                ok=True,
+                detail=f"connected ({endpoint}), models={len(data)}, sample_model={sample}{configured}",
+            )
+        configured = f", configured_model={model}" if model else ""
+        return HealthResult(
+            name="LLM",
+            ok=True,
+            detail=f"connected ({endpoint}){configured}",
+        )
+    except Exception as exc:
+        return HealthResult(name="LLM", ok=False, detail=f"{type(exc).__name__}: {exc}")
+
+
+def check_embedding_connection(timeout_sec: int = 20) -> HealthResult:
+    """임베딩 API 접근 및 샘플 벡터 생성 여부를 점검한다."""
+    base_url = os.getenv("RAG_EMBED_BASE_URL", "").strip()
+    api_key = os.getenv("RAG_EMBED_API_KEY", "").strip()
+    model = os.getenv("RAG_EMBED_MODEL", "BAAI/bge-m3").strip()
+    if not base_url:
+        return HealthResult(name="EMBEDDING", ok=False, detail="RAG_EMBED_BASE_URL is not set")
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    payload = {"model": model, "input": ["health check text"]}
+    try:
+        response = requests.post(base_url, headers=headers, json=payload, timeout=timeout_sec)
+        if response.status_code >= 400:
+            return HealthResult(
+                name="EMBEDDING",
+                ok=False,
+                detail=f"HTTP {response.status_code} from {base_url}: {response.text[:200]}",
+            )
+        body = response.json()
+        vectors = _extract_embedding_vectors(body)
+        if not vectors:
+            return HealthResult(
+                name="EMBEDDING",
+                ok=False,
+                detail=f"connected but unsupported response format: {json.dumps(body, ensure_ascii=False)[:250]}",
+            )
+        dim = len(vectors[0]) if vectors and vectors[0] else 0
+        return HealthResult(
+            name="EMBEDDING",
+            ok=True,
+            detail=f"connected ({base_url}), model={model}, vectors={len(vectors)}, dim={dim}",
+        )
+    except Exception as exc:
+        return HealthResult(name="EMBEDDING", ok=False, detail=f"{type(exc).__name__}: {exc}")
+
+
+def run_health_checks() -> list[HealthResult]:
+    """전체 연결 점검을 수행한다."""
+    results = [
+        check_oracle_connection(),
+        check_llm_connection(),
+        check_embedding_connection(),
+    ]
+    return results
+
+
 def init_db():
+    """기존 스크립트 호환용 진입점.
+
+    - Oracle만이 아니라 LLM/Embedding 연결 상태도 함께 출력한다.
     """
-    Validate Oracle connectivity and confirm required tables are reachable.
+    results = run_health_checks()
+    logger.info("========== Connection Health Check ==========")
+    all_ok = True
+    for result in results:
+        if result.ok:
+            logger.info(f"[OK]   {result.name:<10} {result.detail}")
+        else:
+            all_ok = False
+            logger.error(f"[FAIL] {result.name:<10} {result.detail}")
+    logger.info("============================================")
 
-    This project assumes the Oracle schema already exists.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        mapping_table = get_mapping_rule_table()
-        mapping_detail_table = get_mapping_rule_detail_table()
-        result_table = get_result_table()
-
-        cursor.execute(f"SELECT COUNT(*) FROM {mapping_table}")
-        mapping_count = cursor.fetchone()[0]
-
-        cursor.execute(f"SELECT COUNT(*) FROM {mapping_detail_table}")
-        mapping_detail_count = cursor.fetchone()[0]
-
-        cursor.execute(f"SELECT COUNT(*) FROM {result_table}")
-        result_count = cursor.fetchone()[0]
-
-        logger.info(f"{mapping_table} is reachable. Current row count: {mapping_count}")
-        logger.info(f"{mapping_detail_table} is reachable. Current row count: {mapping_detail_count}")
-        logger.info(f"{result_table} is reachable. Current row count: {result_count}")
+    if all_ok:
+        logger.info("All connection checks passed.")
+    else:
+        logger.error("Some connection checks failed. Please inspect .env and endpoint accessibility.")
 
 
 if __name__ == "__main__":
     init_db()
+

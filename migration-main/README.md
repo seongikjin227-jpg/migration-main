@@ -1,33 +1,225 @@
-## AI 활용을 위해 SQL Migration Agent 의 계획과 업무 Flow에 대한 내용을 저장하는 곳. ## 절대 수정 불가
+# Migration Agent
 
-Mapper 파일 SQL Migration Agent는 AS-IS 시스템의 mapper XML 파일 내 SQL을 분석하여, TO-BE 스키마 및 매핑 규칙에 맞는 SQL로 재생성하고, 해당 SQL이 실제로 실행 가능한지까지 검증하는 것을 목적으로 한다. 본 Agent는 단순히 SQL 문장을 변환하는 도구가 아니라, mapper SQL의 동적 구조와 바인딩 파라미터 특성을 고려하여 실제 검증 가능한 수준의 결과물을 만드는 반자동 Migration Agent로 정의할 수 있다. 특히 본 Agent는 select 구문 중심의 mapper SQL을 대상으로 하며, XML 내부의 원본 SQL을 그대로 활용하여 LLM이 조건 구조와 바인딩 파라미터를 스스로 해석하고, 그 결과를 기반으로 TO-BE SQL 생성과 검증용 바인딩 파라미터 셋 생성, 실제 실행 검증까지 수행하도록 설계한다.
+Oracle 기반 SQL Migration 배치 에이전트입니다.  
+`NEXT_SQL_INFO`의 실패 건(`STATUS='FAIL'`)을 주기적으로 재처리하면서:
 
-본 Agent가 대상으로 하는 mapper SQL은 일반적인 정적 SQL과 달리 namespace와 sql id 단위로 관리되며, if, choose, where, trim 등의 동적 조건이 포함될 수 있고, 실행 시점에는 #{} 형태의 바인딩 파라미터 값이 주입되어야 완전한 SQL이 된다. 따라서 단순히 SQL을 문법적으로 변환하는 것만으로는 충분하지 않으며, 실제로 어떤 값이 들어가야 SQL이 정상적으로 수행되는지까지 고려해야 한다. 이 점에서 본 Agent는 단순 SQL 변환기가 아니라, SQL 생성과 실행 검증이 결합된 구조를 가진다.
+1. AS-IS SQL(`FR_SQL_TEXT` 또는 `EDIT_FR_SQL`)을 TO-BE SQL로 생성
+2. 검증용 bind 추출 SQL 생성/실행
+3. 테스트 SQL 생성/실행
+4. 결과를 같은 row에 업데이트
 
-본 Agent의 주요 업무 범위는 다음과 같다. 먼저 mapper XML 파일에서 namespace, sql id, statement type, 원본 SQL을 추출한다. 이후 원본 SQL 전체를 LLM에 입력하여 SQL 내부의 동적 조건문과 바인딩 파라미터 구조를 LLM이 직접 해석하도록 한다. 이를 바탕으로 TO-BE 스키마 및 매핑 규칙에 맞는 SQL을 재생성한다. 그러나 여기서 끝나지 않고, 생성된 SQL을 실제 검증하기 위해 필요한 바인딩 파라미터 셋을 만들 수 있도록 값 후보 조회용 SQL도 함께 생성한다. 그 다음, 조회된 실제 데이터 기반 바인딩 파라미터 셋을 JSON 형식으로 정리한 뒤, 이를 생성된 TO-BE SQL에 적용하여 select 실행 검증을 수행한다. 마지막으로 검증 결과를 저장하고, 실패 결과와 개발자가 사후에 입력한 correct_sql을 다음 배치 프롬프트에 반영하여 점진적으로 생성 품질을 높이는 구조를 가진다.
+핵심은 "SQL 생성"만이 아니라 "실행 가능한지까지 검증"하는 것입니다.
 
-업무 흐름의 첫 단계는 입력 수집 단계이다. Agent는 먼저 처리 대상 mapper XML 파일을 조회하고, 각 mapper 파일에서 namespace, sql id, statement type, 원본 SQL 전체를 추출한다. 이때 중요한 점은 동적 조건문이나 바인딩 파라미터를 사전에 별도의 구조화된 목록으로 분리하여 입력하지 않는다는 것이다. 원본 SQL 전체를 손실 없이 확보한 뒤, 이를 그대로 LLM에 전달하는 것이 기본 원칙이다. 즉 전처리 단계에서 사람이 복잡하게 if문과 바인딩 파라미터를 정리해주는 방식이 아니라, SQL 원문 자체를 기반으로 LLM이 필요한 구조를 해석하도록 설계한다. 따라서 입력 수집 단계의 목적은 세부 구조를 사람이 분리하는 데 있지 않고, 검증 대상이 되는 mapper SQL 원문과 식별 정보를 정확히 확보하는 데 있다.
+## 1) 프로젝트 구조
 
-두 번째 단계는 SQL 구조 해석 단계이다. 이 단계에서 Agent는 원본 SQL 전체를 LLM에 전달하고, LLM은 그 안에 포함된 if 조건, choose 분기, 바인딩 파라미터, null 여부 조건, 파라미터 간 결합 구조 등을 스스로 해석한다. 즉 어떤 바인딩 파라미터가 존재하는지, 어떤 if문이 어떤 조건으로 활성화되는지, 특정 파라미터가 null이어야 하는지 not null이어야 하는지, 검증을 위해 어떤 바인딩 파라미터 조합이 필요한지를 LLM이 판단하게 된다. 이 방식의 핵심은 동적 조건문과 바인딩 파라미터 목록을 사전에 별도로 입력하지 않고, 원본 SQL 전체만으로 구조 해석과 판단을 수행한다는 점이다. 이를 통해 전처리 복잡도를 낮추고, 다양한 mapper SQL 구조에 유연하게 대응할 수 있다.
+```text
+migration-main/
+  app/
+    main.py                      # 배치 엔트리포인트 (APScheduler 1분 주기)
+    batch/
+      runner.py                  # poll_database(), Job 루프
+    agent/
+      mapper_sql_agent.py        # MigrationOrchestrator 핵심 파이프라인
+    repositories/
+      mapper_repository.py       # 매핑룰 조회 (NEXT_MIG_INFO + DTL)
+      result_repository.py       # 대상 Job 조회/결과 업데이트/피드백 조회
+    services/
+      llm_service.py             # 프롬프트 렌더 + LLM 호출 + SQL 정규화
+      binding_service.py         # bind 파라미터명 추출, bind_set 구성
+      feedback_rag_service.py    # CORRECT_SQL 임베딩/RAG 검색
+      validation_service.py      # bind/test SQL 실행 및 PASS/FAIL 판정
+      prompt_service.py          # 템플릿 로더
+      xml_parser_service.py      # mapper XML -> NEXT_SQL_INFO 적재 유틸
+      case_service.py            # (현재 비어 있음)
+    prompts/
+      tobe_sql_prompt.txt
+      bind_sql_prompt.txt
+      test_sql_prompt.txt
+      test_sql_no_bind_prompt.txt
+    config.py                    # .env 로딩, Oracle 연결
+    models.py                    # SqlInfoJob, MappingRuleItem
+    exceptions.py                # LLMRateLimitError, DBSqlError
+    runtime.py                   # graceful stop 이벤트
+    logger.py                    # 공통 로거
+  init_db.py                     # 필수 테이블 접근 점검
+  list_mapping_rules.py          # 매핑룰 조회 CLI
+  requirements.txt
+```
 
-세 번째 단계는 TO-BE SQL 생성 단계이다. Agent는 원본 SQL 전체, namespace, sql id, AS-IS와 TO-BE 간 테이블 및 컬럼 매핑 규칙, 과거 실패 사례, 개발자가 입력한 correct_sql을 함께 참고하여 TO-BE SQL을 생성한다. 이때도 if문 구조나 바인딩 파라미터 목록을 별도로 정리해서 넣는 것이 아니라, 원본 SQL 전체 안에 담긴 구조를 LLM이 직접 해석한다. 따라서 프롬프트에는 SQL 원문과 매핑 규칙, 실패 결과, 정답 예시를 함께 제공하고, LLM이 이를 종합적으로 고려하여 TO-BE SQL을 재생성하도록 유도한다. 특히 과거에 비슷한 SQL이 잘못 생성된 적이 있고, 이후 개발자가 correct_sql을 입력해 정정했다면, 이 정보는 다음 생성 시 중요한 정답 예시로 활용된다. 따라서 생성 단계는 단순 LLM 호출이 아니라, 운영 중 축적된 실패 이력과 사람 피드백이 반영되는 피드백 기반 생성 단계라고 볼 수 있다.
+## 2) 런타임 실행 흐름
 
-네 번째 단계는 바인딩 파라미터 셋 생성을 위한 조회 SQL 생성 단계이다. 생성된 TO-BE SQL이 실제로 실행 가능한지 검증하려면, SQL 안에 들어갈 바인딩 파라미터 값이 필요하다. 하지만 mapper SQL의 바인딩 파라미터는 임의의 값으로 채우는 것이 아니라, 실제 DB에서 조회 가능한 값을 기반으로 구성되어야 한다. 그래야 검증이 의미를 가진다. 따라서 Agent는 원본 SQL 전체를 해석한 결과를 바탕으로, 검증에 필요한 바인딩 파라미터 셋을 추출하기 위한 조회 SQL도 함께 생성해야 한다. 다시 말해, LLM은 TO-BE SQL만 만드는 것이 아니라, 해당 SQL을 테스트하기 위해 어떤 값 후보를 DB에서 조회해야 하는지까지 판단해야 한다. 이 조회 SQL은 특정 파라미터 하나를 위한 조회문일 수도 있고, 여러 파라미터 조합을 한 번에 뽑는 조회문일 수도 있다. 중요한 것은 실제 검증용 바인딩 파라미터 셋을 생성할 수 있도록 DB 기반 값 후보를 확보하는 것이다.
+### 2.1 스케줄러
 
-다섯 번째 단계는 바인딩 파라미터 셋 생성 단계이다. 이전 단계에서 생성된 조회 SQL을 실행하면, 검증에 사용할 수 있는 실제 값 후보가 추출된다. 이 결과를 기반으로 Agent는 바인딩 파라미터 셋을 JSON 형식으로 정리한다. 여기서 바인딩 파라미터 셋이란, 각 바인딩 파라미터에 어떤 값이 들어가야 하는지에 대한 조합 정보라고 볼 수 있다. 예를 들어 하나의 SQL에 id, menuCd, useYn 같은 파라미터가 포함되어 있다면, 하나의 바인딩 파라미터 셋은 id는 어떤 값, menuCd는 어떤 값, useYn은 어떤 값 또는 null이 들어간다는 식으로 구성된다. 이 JSON 배열은 단순한 테스트 데이터가 아니라, 실제 DB 기반으로 구성된 실행 검증 입력 세트이다. 따라서 바인딩 파라미터 셋 생성은 단순 랜덤 값 생성이 아니라, 검증 가능한 조합을 만드는 핵심 단계이다.
+- `app/main.py`
+- APScheduler `interval=1 minute`
+- 첫 실행 `next_run_time=datetime.now()`
+- SIGINT/SIGTERM 처리:
+  - 1회: graceful shutdown 요청
+  - 2회: 강제 종료
 
-여섯 번째 단계는 검증 테스트 SQL 생성 및 실행 단계이다. 바인딩 파라미터 셋이 준비되면, Agent는 각 파라미터 셋을 기반으로 생성된 TO-BE SQL이 실제로 실행 가능한지 검증한다. 이 검증은 select SQL에 한하여 수행한다. 즉 insert, update, delete의 실제 실행 검증은 제외하고, mapper XML 내 select 구문만 실행 검증 대상으로 한다. 검증 방식은 먼저 원본 SQL 전체를 기반으로 LLM이 TO-BE SQL을 생성하고, 같은 원본 SQL을 기반으로 LLM이 바인딩 파라미터 셋 추출용 조회 SQL을 생성한 뒤, 조회 결과를 JSON 형식의 바인딩 파라미터 셋으로 정리하고, 각 셋을 생성된 TO-BE SQL에 적용하여 실제 select 실행을 수행하는 방식이다. 이 과정에서 성공 여부, row count, 에러 메시지 등을 모두 기록한다. 즉 검증 단계는 단순 문법 체크가 아니라, 실제 데이터 기반 파라미터를 넣고 DB에서 select가 정상 수행되는지 확인하는 실행 검증 단계이다.
+### 2.2 Job 조회 기준
 
-본 Agent의 검증 목적은 생성된 TO-BE SQL이 문법적으로 맞는지만 확인하는 데 있지 않다. 실제 운영에 가까운 방식으로, 실제 DB에서 조회한 바인딩 파라미터 셋을 적용했을 때 SQL이 정상적으로 수행되는지를 확인하는 것이 핵심이다. 따라서 검증 기준은 크게 세 가지로 나눌 수 있다. 첫째, TO-BE SQL이 정상적으로 생성되었는가. 둘째, 바인딩 파라미터 후보 조회 SQL이 정상적으로 생성되고 실행되었는가. 셋째, 실제 조회된 값으로 구성한 바인딩 파라미터 셋을 적용했을 때 select가 정상 수행되는가. 이 세 단계가 모두 만족되어야 비로소 검증 성공으로 판단할 수 있다.
+- `app/repositories/result_repository.py:get_pending_jobs`
+- 현재 처리 대상은 **`STATUS='FAIL'`** 레코드만입니다.
+- 정렬: `UPD_TS NULLS FIRST, SPACE_NM, SQL_ID`
 
-검증 절차는 다음과 같이 정리할 수 있다. 먼저 원본 SQL을 바탕으로 TO-BE SQL을 생성한다. 다음으로 검증에 필요한 값 후보를 뽑기 위한 조회 SQL을 생성한다. 이 조회 SQL을 실행해 실제 데이터 기반 값 후보를 확보한다. 확보한 값을 JSON 형식의 바인딩 파라미터 셋으로 변환한다. 이후 각 바인딩 파라미터 셋을 TO-BE SQL에 적용하여 실행 검증을 수행한다. 마지막으로 성공 여부, row count, 에러 메시지를 결과로 저장한다. 이 과정은 하나의 SQL에 대해 여러 개의 바인딩 파라미터 셋이 존재할 수 있으므로, 단일 검증이 아니라 반복 검증 구조로 수행된다.
+### 2.3 오케스트레이션 단계
 
-검증 성공 기준은 생성된 TO-BE SQL이 정상 생성되었고, 바인딩 파라미터 후보 조회 SQL이 정상 수행되었으며, 조회 결과로 얻은 바인딩 파라미터 셋이 정상 생성되었고, 이를 적용한 select 실행이 오류 없이 수행되는 경우로 정의할 수 있다. row count가 0인 경우는 운영 정책에 따라 다르게 처리할 수 있으나, 일반적으로는 SQL 실행 자체가 정상이고 오류가 없었다면 실행 성공이되 데이터 없음으로 별도 구분하는 것이 합리적이다. 반대로 문법 오류, 존재하지 않는 컬럼 참조, 존재하지 않는 테이블 참조, null 조건 불일치, 바인딩 파라미터 누락, 잘못된 조합으로 인한 실행 오류 등은 모두 검증 실패로 간주해야 한다.
+- `app/agent/mapper_sql_agent.py:MigrationOrchestrator.process_job`
 
-검증 실패 유형은 최소한 XML 파싱 실패, TO-BE SQL 생성 실패, 바인딩 파라미터 후보 조회 SQL 생성 실패, 바인딩 파라미터 후보 조회 실패, 바인딩 파라미터 셋 생성 실패, 테스트 select 실행 실패, 컬럼 또는 테이블 불일치, 문법 오류, null 조건 불일치, 분기 누락 정도로 구분하여 관리하는 것이 좋다. 이러한 실패 정보는 단순 로그로만 남는 것이 아니라, 이후 재시도 프롬프트의 핵심 입력으로 활용된다. 즉 어떤 SQL이 어떤 이유로 실패했는지, 어떤 바인딩 파라미터 셋에서 실패했는지, 어떤 에러 메시지가 발생했는지를 저장해두고, 재생성 시 이를 그대로 프롬프트에 넣어 같은 실수를 피하도록 해야 한다.
+처리 순서:
 
-본 Agent는 운영 중 점진적으로 품질을 높이는 구조를 가져야 하므로, 실패 결과와 개발자 피드백을 함께 관리하는 것이 중요하다. 검증 실패 시에는 원본 SQL, 생성된 TO-BE SQL, 실패 원인, 실패한 바인딩 파라미터 셋, 에러 메시지를 저장한다. 이후 배치가 종료된 뒤 개발자가 correct_sql 컬럼에 올바른 SQL을 직접 입력하면, 이 정보는 다음 실행부터 정답 예시로 활용된다. 즉 correct_sql은 단순 보관용 컬럼이 아니라, 사람이 최종적으로 검증한 정답 데이터이자 프롬프트 보강용 데이터이다. 이후 유사한 SQL을 생성할 때에는 과거 실패 SQL, 실패 이유, 개발자가 수정한 correct_sql을 함께 프롬프트에 넣어 같은 유형의 오류를 줄이도록 한다. 따라서 본 Agent는 파인튜닝 기반 학습 시스템이 아니라, 배치 결과와 사람 피드백을 누적하여 프롬프트 품질을 개선하는 운영형 Agent라고 정의하는 것이 정확하다.
+1. 매핑 룰 로딩 (`get_all_mapping_rules`)  
+2. 피드백 예시 로딩 (`feedback_rag_service.retrieve_feedback_examples`)  
+3. TO-BE SQL 생성 (`generate_tobe_sql`)  
+4. `TAG_KIND != SELECT` 이면 TO-BE만 업데이트하고 `PASS` 종료  
+5. bind 파라미터 유무 판정
+   - 없으면 bind/test를 no-bind 경로로 처리
+   - 있으면 bind SQL 생성/실행 후 bind_set 생성
+6. test SQL 생성 (`generate_test_sql` 또는 `generate_test_sql_no_bind`)  
+7. test SQL 실행 후 결과 판정 (`evaluate_status_from_test_rows`)  
+8. 결과 업데이트 (`update_cycle_result`)
 
-최종적으로 본 Agent가 남겨야 하는 산출물은 단순 TO-BE SQL 한 개가 아니다. 최소한 namespace, sql id, 원본 AS-IS SQL, 생성된 TO-BE SQL, 바인딩 파라미터 셋 추출용 조회 SQL, 조회 결과 기반 바인딩 파라미터 셋 JSON, 검증 실행 결과, row count, 성공 또는 실패 여부, 실패 메시지, correct_sql이 함께 저장되어야 한다. 그래야 추후 문제 발생 시 어떤 SQL이 어떤 값 조합에서 실패했는지 추적할 수 있고, 동시에 성공 사례와 정답 SQL을 다음 생성에 활용할 수 있다.
+재시도 정책:
 
-정리하면, Mapper 파일 SQL Migration Agent의 핵심 목적은 AS-IS mapper SQL을 TO-BE SQL로 재생성하는 데 그치지 않고, 원본 SQL 전체를 기반으로 LLM이 동적 조건과 바인딩 파라미터 구조를 직접 해석하여, 실제 DB 기반 바인딩 파라미터 셋을 만들고, 이를 이용해 select 실행 검증까지 수행하는 것이다. 또한 검증 실패 결과와 개발자가 입력한 correct_sql을 다음 프롬프트에 반영함으로써, 운영을 거듭할수록 SQL 생성 품질을 높일 수 있는 구조를 갖는다. 따라서 본 Agent는 단순 변환기가 아니라, mapper SQL migration 업무를 자동화하면서도 사람의 검토 결과를 계속 흡수하는 반자동 개선형 SQL Migration Agent로 정의할 수 있다.
+- 최대 3회 재시도 (`retry_count <= 3`)
+- `LLMRateLimitError`, 일반 예외 모두 재시도 대상
+- 최종 실패 시 `STATUS='FAIL'` 및 마지막 산출물/에러 로그 저장
+
+## 3) LLM/SQL 처리 규칙
+
+- `app/services/llm_service.py`
+- 프롬프트는 `app/prompts/*.txt`를 템플릿으로 렌더링
+- LLM 응답 정규화:
+  - 코드블록 추출
+  - SQL 시작 키워드 검증
+  - trailing `LIMIT n` -> `FETCH FIRST n ROWS ONLY` 치환
+  - 세미콜론 다중문 금지
+- 실행 직전 검증(`validation_service.py`):
+  - `<if>`, `<choose>`, `#{}`, `${}` 등 MyBatis 런타임 토큰 포함 시 실패
+  - 다중 SQL 금지
+  - Oracle 11g 호환 row limit 래핑 (`ROWNUM`)
+
+## 4) PASS/FAIL 판정 규칙
+
+- `evaluate_status_from_test_rows(rows)`
+- 테스트 SQL은 반드시 컬럼을 포함해야 함:
+  - `CASE_NO`
+  - `FROM_COUNT`
+  - `TO_COUNT`
+- 판정:
+  - 모든 케이스에서 `FROM_COUNT == TO_COUNT`
+  - 단, `0 == 0`은 실패로 취급 (양쪽 모두 데이터 미발견)
+  - 위 조건 불만족 또는 결과 없음 -> `FAIL`
+
+## 5) DB 계약 (코드 기준)
+
+### 5.1 조회/갱신 대상 테이블
+
+- 결과 테이블: `NEXT_SQL_INFO`
+- 매핑 마스터: `NEXT_MIG_INFO`
+- 매핑 상세: `NEXT_MIG_INFO_DTL`
+
+### 5.2 NEXT_SQL_INFO 사용 컬럼
+
+- 읽기:
+  - `TAG_KIND`, `SPACE_NM`, `SQL_ID`, `FR_SQL_TEXT`, `EDIT_FR_SQL`
+  - `TO_SQL_TEXT`, `BIND_SQL`, `BIND_SET`, `TEST_SQL`
+  - `STATUS`, `LOG`, `UPD_TS`, `EDITED_YN`, `CORRECT_SQL`
+- 쓰기:
+  - `TO_SQL_TEXT`, `BIND_SQL`, `BIND_SET`, `TEST_SQL`
+  - `STATUS`, `LOG`, `UPD_TS`
+
+`result_repository`는 `USER_TAB_COLUMNS`를 조회해 컬럼 길이를 확인하고, 비 CLOB 컬럼은 UTF-8 byte 기준으로 자동 truncate 후 저장합니다.
+
+## 6) 환경변수
+
+`.env`는 프로젝트 루트(`migration-main/.env`)에 둡니다.
+
+필수:
+
+- `ORACLE_USER`
+- `ORACLE_PASSWORD`
+- `ORACLE_DSN`
+- `LLM_API_KEY`
+- `LLM_MODEL`
+- `LLM_BASE_URL`
+
+선택:
+
+- `ORACLE_CLIENT_LIB_DIR` (기본값: `C:\oracle\instantclient_21c`)
+- `MAPPER_XML_SOURCE_DIR`
+- `XML_PARSER_DATA_DIR`
+- `ACTIVE_SQL_ID_TABLE`
+- `ACTIVE_SQL_ID_COLUMN` (기본값: `SQL_ID`)
+- `TEST_MAPPING_TABLES`
+- `RAG_EMBED_BASE_URL` (임베딩 API URL)
+- `RAG_EMBED_MODEL` (기본: `BAAI/bge-m3`)
+- `RAG_EMBED_API_KEY` (선택)
+- `RAG_EMBED_TIMEOUT_SEC` (기본: `30`)
+- `RAG_VECTOR_DB_PATH` (기본: `migration.db`)
+- `RAG_VECTOR_TABLE` (기본: `feedback_rag_index`)
+- `RAG_TOP_K` (기본: `5`)
+- `RAG_SYNC_INTERVAL_SEC` (기본: `300`)
+- `RAG_CORPUS_LIMIT` (기본: `2000`)
+
+## 7) 실행 방법
+
+의존성 설치:
+
+```bash
+pip install -r requirements.txt
+```
+
+통합 연결 점검(Oracle/LLM/Embedding):
+
+```bash
+python init_db.py
+```
+
+배치 실행:
+
+```bash
+python app/main.py
+```
+
+매핑룰 조회 유틸:
+
+```bash
+python list_mapping_rules.py --format table
+python list_mapping_rules.py --fr-table TB_A --to-table TB_B --format json --out rules.json
+```
+
+RAG 벡터 인덱스 확인:
+
+```bash
+python inspect_rag_index.py
+python inspect_rag_index.py --limit 20
+python inspect_rag_index.py --show-vector
+```
+
+XML parser 유틸:
+
+```bash
+python -m app.services.xml_parser_service stage1 --source-dir <mapper_dir> --output-dir <out_dir>
+python -m app.services.xml_parser_service stage2 --output-dir <out_dir>
+python -m app.services.xml_parser_service stage3
+python -m app.services.xml_parser_service stage4
+python -m app.services.xml_parser_service all --source-dir <mapper_dir> --output-dir <out_dir>
+```
+
+## 8) 운영 시 주의사항
+
+- 현재 설계상 신규 건 자동 처리보다 "실패 건 재처리 루프"에 최적화되어 있습니다.
+- `TAG_KIND != SELECT`는 실행 검증 없이 TO-BE 생성만 하고 `PASS`로 종료됩니다.
+- LLM 응답 품질은 프롬프트와 `feedback_examples`(`EDITED_YN`, `CORRECT_SQL`)에 강하게 의존합니다.
+
+## 9) README 동기화 원칙
+
+코드 변경 시 아래 항목이 영향받으면 README를 같은 PR/커밋에서 같이 업데이트합니다.
+
+- 패키지 구조/파일 역할 변경
+- 오케스트레이션 단계/재시도 정책 변경
+- PASS/FAIL 판정 규칙 변경
+- ENV/테이블/컬럼 계약 변경
+- 실행 명령 변경
