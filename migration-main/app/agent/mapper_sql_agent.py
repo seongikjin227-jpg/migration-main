@@ -10,7 +10,12 @@ from app.repositories.result_repository import (
 )
 from app.runtime import is_stop_requested
 from app.services.binding_service import bind_sets_to_json, build_bind_sets, extract_bind_param_names
-from app.services.llm_service import generate_bind_sql, generate_test_sql, generate_tobe_sql
+from app.services.llm_service import (
+    generate_bind_sql,
+    generate_test_sql,
+    generate_test_sql_no_bind,
+    generate_tobe_sql,
+)
 from app.services.validation_service import (
     evaluate_status_from_test_rows,
     execute_binding_query,
@@ -134,13 +139,21 @@ class MigrationOrchestrator:
                     )
 
                 stage = "GENERATE_TEST_SQL"
-                test_sql = generate_test_sql(
-                    job=job,
-                    tobe_sql=tobe_sql,
-                    bind_set_json=bind_set_json_for_test,
-                    last_error=last_error,
-                    feedback_examples=feedback_examples,
-                )
+                if not bind_param_names:
+                    test_sql = generate_test_sql_no_bind(
+                        job=job,
+                        tobe_sql=tobe_sql,
+                        last_error=last_error,
+                        feedback_examples=feedback_examples,
+                    )
+                else:
+                    test_sql = generate_test_sql(
+                        job=job,
+                        tobe_sql=tobe_sql,
+                        bind_set_json=bind_set_json_for_test,
+                        last_error=last_error,
+                        feedback_examples=feedback_examples,
+                    )
                 latest_test_sql = test_sql
                 log_stage(stage, "completed", f"(sql_length={len(test_sql)})")
                 stage = "EXECUTE_TEST_SQL"

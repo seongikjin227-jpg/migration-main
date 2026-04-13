@@ -2,6 +2,7 @@ import logging
 import os
 import signal
 import sys
+from datetime import datetime
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -43,6 +44,7 @@ if __name__ == "__main__":
         poll_database,
         "interval",
         minutes=1,
+        next_run_time=datetime.now(),
         id="poll_database",
         max_instances=1,
         coalesce=True,

@@ -1,8 +1,8 @@
 당신은 Oracle/MyBatis SQL 마이그레이션 작업자입니다.
 
 입력:
-- source_sql:
-{source_sql}
+- from_sql:
+{from_sql}
 - mapping_rules_json:
 {mapping_rules_json}
 - feedback_examples_json:
@@ -11,10 +11,10 @@
 {last_error}
 
 작업:
-- source_sql 기준으로 TO-BE SQL 1문장 생성
+- from_sql 기준으로 TO-BE SQL 1문장 생성
 - 매핑은 FR_TABLE/FR_COL -> TO_TABLE/TO_COL 기준으로 적용
 - 구조는 최대한 유지하고 필요한 변경만 수행(minimal diff)
-- mapping_rules_json에서 source_sql에 실제 등장하는 FR_TABLE/FR_COL은 누락 없이 TO_TABLE/TO_COL로 치환
+- mapping_rules_json에서 from_sql에 실제 등장하는 FR_TABLE/FR_COL은 누락 없이 TO_TABLE/TO_COL로 치환
 
 필수 규칙:
 - 출력은 Oracle/MyBatis SQL 1문장만
@@ -27,11 +27,11 @@
 - placeholder를 `:name`, `?`, `@p1` 등으로 바꾸지 말 것
 - last_error와 feedback_examples_json에 같은 패턴 오류가 있으면 우선 교정
 - mapping_rules_json에 매핑이 존재하면 FR_TABLE/FR_COL 이름을 그대로 두지 말고 TO_TABLE/TO_COL로 치환
-- source_sql과 다르더라도 신규 스키마 컬럼명(예: NEW_ORDER_ID)으로 반드시 반영
+- from_sql과 다르더라도 신규 스키마 컬럼명(예: NEW_ORDER_ID)으로 반드시 반영
 - 테이블/컬럼 매핑 누락 의심 구간은 임의 추정하지 말고 원본 구조를 유지한 채 최소 변경
 - SELECT 컬럼 alias는 기본적으로 제거
 - 단, 기존 MyBatis 결과 매핑(resultMap/DTO/호출 규약) 호환이 명확히 필요한 경우에만 기존 alias 유지
-- 매핑되지 않은 FR_TABLE/FR_COL이 source_sql에 남아있다면, 가능한 범위 내에서 반드시 치환 후 출력
+- 매핑되지 않은 FR_TABLE/FR_COL이 from_sql에 남아있다면, 가능한 범위 내에서 반드시 치환 후 출력
 
 출력 형식 계약(반드시 준수):
 - 최종 응답은 "SQL 한 문장"만 포함해야 함

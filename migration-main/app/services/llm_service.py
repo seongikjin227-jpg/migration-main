@@ -55,7 +55,7 @@ def build_tobe_sql_messages(
 ) -> list[dict[str, str]]:
     merged_prompt = render_prompt(
         "tobe_sql_prompt.txt",
-        source_sql=job.source_sql,
+        from_sql=job.source_sql,
         mapping_rules_json=_serialize_mapping_rules(mapping_rules),
         feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
         last_error=last_error or "None",
@@ -74,7 +74,7 @@ def build_bind_sql_messages(
     bind_target_hints = build_bind_target_hints(tobe_sql=tobe_sql, source_sql=job.source_sql)
     merged_prompt = render_prompt(
         "bind_sql_prompt.txt",
-        source_sql=job.source_sql,
+        from_sql=job.source_sql,
         tobe_sql=tobe_sql,
         bind_target_hints_json=json.dumps(bind_target_hints, ensure_ascii=False),
         feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
@@ -94,9 +94,27 @@ def build_test_sql_messages(
 ) -> list[dict[str, str]]:
     merged_prompt = render_prompt(
         "test_sql_prompt.txt",
-        source_sql=job.source_sql,
+        from_sql=job.source_sql,
         tobe_sql=tobe_sql,
         bind_set_json=bind_set_json,
+        feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
+        last_error=last_error or "None",
+    )
+    return [
+        {"role": "system", "content": merged_prompt},
+    ]
+
+
+def build_test_sql_no_bind_messages(
+    job: SqlInfoJob,
+    tobe_sql: str,
+    last_error: str | None = None,
+    feedback_examples: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    merged_prompt = render_prompt(
+        "test_sql_no_bind_prompt.txt",
+        from_sql=job.source_sql,
+        tobe_sql=tobe_sql,
         feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
         last_error=last_error or "None",
     )
@@ -279,6 +297,25 @@ def generate_test_sql(
             job=job,
             tobe_sql=tobe_sql,
             bind_set_json=bind_set_json,
+            last_error=last_error,
+            feedback_examples=feedback_examples,
+        ),
+    )
+
+
+def generate_test_sql_no_bind(
+    job: SqlInfoJob,
+    tobe_sql: str,
+    last_error: str | None = None,
+    feedback_examples: list[dict[str, str]] | None = None,
+) -> str:
+    return call_llm_api(
+        api_key=None,
+        model=None,
+        base_url=None,
+        messages=build_test_sql_no_bind_messages(
+            job=job,
+            tobe_sql=tobe_sql,
             last_error=last_error,
             feedback_examples=feedback_examples,
         ),
