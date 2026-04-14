@@ -29,20 +29,138 @@ def _env_or_value(value: str | None, env_name: str) -> str:
 
 
 def _serialize_mapping_rules(mapping_rules: list[MappingRuleItem]) -> str:
-    """프롬프트 주입용으로 매핑 룰을 JSON 문자열로 직렬화한다."""
+    """프롬프트 주입용으로 매핑 룰을 사람이 읽기 쉬운 구조 텍스트로 직렬화한다."""
     if not mapping_rules:
-        return "[]"
-    payload = [
-        {
-            "MAP_TYPE": rule.map_type,
-            "FR_TABLE": rule.fr_table,
-            "FR_COL": rule.fr_col,
-            "TO_TABLE": rule.to_table,
-            "TO_COL": rule.to_col,
-        }
-        for rule in mapping_rules
-    ]
-    return json.dumps(payload, ensure_ascii=False)
+        return "[TABLE_MAPPING]\n- (empty)\n\n[COLUMN_MAPPING_BY_TABLE]\n- (empty)"
+
+    table_pairs: set[tuple[str, str]] = set()
+    column_pairs_by_table: dict[tuple[str, str], set[tuple[str, str]]] = {}
+
+    for rule in mapping_rules:
+        fr_table = (rule.fr_table or "").strip()
+        to_table = (rule.to_table or "").strip()
+        fr_col = (rule.fr_col or "").strip()
+        to_col = (rule.to_col or "").strip()
+        if not fr_table or not to_table:
+            continue
+
+        table_key = (fr_table, to_table)
+        table_pairs.add(table_key)
+        if fr_col and to_col:
+            if table_key not in column_pairs_by_table:
+                column_pairs_by_table[table_key] = set()
+            column_pairs_by_table[table_key].add((fr_col, to_col))
+
+    lines: list[str] = []
+    lines.append("[TABLE_MAPPING]")
+    for fr_table, to_table in sorted(table_pairs):
+        lines.append(f"- {fr_table} -> {to_table}")
+
+    lines.append("")
+    lines.append("[COLUMN_MAPPING_BY_TABLE]")
+    for fr_table, to_table in sorted(table_pairs):
+        lines.append(f"- {fr_table} -> {to_table}")
+        for fr_col, to_col in sorted(column_pairs_by_table.get((fr_table, to_table), set())):
+            lines.append(f"  - {fr_table}.{fr_col} -> {to_table}.{to_col}")
+
+    return "\n".join(lines)
+
+
+def _normalize_table_token(token: str) -> str:
+    """테이블 토큰을 비교 가능한 형태(대문자, 스키마 제거)로 정규화한다."""
+    value = (token or "").strip().strip('"').strip("'")
+    if not value:
+        return ""
+    if "." in value:
+        value = value.split(".")[-1]
+    return value.upper()
+
+
+def _load_target_tables(job: SqlInfoJob) -> set[str]:
+    """job.target_table(JSON/CSV/공백구분)를 테이블 집합으로 복원한다."""
+    raw = (job.target_table or "").strip()
+    if not raw:
+        return set()
+
+    tokens: list[str] = []
+    if raw.startswith("[") or raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                tokens = [str(item) for item in parsed]
+            elif isinstance(parsed, str):
+                tokens = [parsed]
+        except Exception:
+            tokens = []
+    if not tokens:
+        tokens = re.split(r"[,\s;|]+", raw)
+
+    result: set[str] = set()
+    for token in tokens:
+        normalized = _normalize_table_token(token)
+        if normalized:
+            result.add(normalized)
+    return result
+
+
+def _extract_referenced_fr_tables_from_source_sql(
+    source_sql: str,
+    candidate_fr_tables: set[str],
+) -> set[str]:
+    """source_sql에 실제 등장하는 FR_TABLE 후보를 단어 경계 기준으로 추출한다."""
+    if not source_sql or not candidate_fr_tables:
+        return set()
+
+    text = source_sql
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    text = re.sub(r"--[^\n]*", " ", text)
+    text = re.sub(r"'(?:''|[^'])*'", " ", text)
+    scan = text.upper()
+
+    matched: set[str] = set()
+    for table in candidate_fr_tables:
+        pattern = rf"(?<![A-Z0-9_$#]){re.escape(table)}(?![A-Z0-9_$#])"
+        if re.search(pattern, scan):
+            matched.add(table)
+    return matched
+
+
+def _select_mapping_rules_for_job(
+    job: SqlInfoJob,
+    mapping_rules: list[MappingRuleItem],
+) -> list[MappingRuleItem]:
+    """현재 SQL에 필요한 매핑룰만 선별한다.
+
+    우선순위:
+    1) TARGET_TABLE 기반 FR_TABLE 매칭
+    2) TARGET_TABLE이 비어있으면 source_sql 등장 FR_TABLE 매칭
+    """
+    if not mapping_rules:
+        return []
+
+    rules_by_fr: dict[str, list[MappingRuleItem]] = {}
+    for rule in mapping_rules:
+        fr_norm = _normalize_table_token(rule.fr_table)
+        if not fr_norm:
+            continue
+        rules_by_fr.setdefault(fr_norm, []).append(rule)
+
+    target_tables = _load_target_tables(job)
+    selected_fr_tables = {tbl for tbl in target_tables if tbl in rules_by_fr}
+
+    if not selected_fr_tables:
+        selected_fr_tables = _extract_referenced_fr_tables_from_source_sql(
+            source_sql=job.source_sql,
+            candidate_fr_tables=set(rules_by_fr.keys()),
+        )
+
+    if not selected_fr_tables:
+        return mapping_rules
+
+    filtered: list[MappingRuleItem] = []
+    for fr_table in sorted(selected_fr_tables):
+        filtered.extend(rules_by_fr.get(fr_table, []))
+    return filtered
 
 
 def _serialize_feedback_examples(feedback_examples: list[dict[str, str]]) -> str:
@@ -59,10 +177,11 @@ def build_tobe_sql_messages(
     feedback_examples: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     """TO-BE SQL 생성용 시스템 프롬프트를 만든다."""
+    scoped_rules = _select_mapping_rules_for_job(job=job, mapping_rules=mapping_rules)
     merged_prompt = render_prompt(
         "tobe_sql_prompt.txt",
         from_sql=job.source_sql,
-        mapping_rules_json=_serialize_mapping_rules(mapping_rules),
+        mapping_schema_text=_serialize_mapping_rules(scoped_rules),
         feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
         last_error=last_error or "None",
     )

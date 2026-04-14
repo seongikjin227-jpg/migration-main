@@ -149,6 +149,21 @@ class MigrationOrchestrator:
                 stage = "EVALUATE_STATUS"
                 status = evaluate_status_from_test_rows(test_rows)
                 self._log_stage(job_key, stage, "completed", f"(status={status})")
+                if status != "PASS":
+                    retry_count += 1
+                    last_error = (
+                        "TEST_VALIDATION_FAIL: "
+                        + self._summarize_test_rows_for_retry(test_rows)
+                    )
+                    logger.warning(
+                        f"[Orchestrator] ({job.space_nm}.{job.sql_id}) stage={stage} "
+                        f"status=FAIL (retry={retry_count}/{max_retries}): {last_error}"
+                    )
+                    if retry_count <= max_retries:
+                        time.sleep(1)
+                        continue
+                    break
+
                 final_log = (
                     f"FINAL SUCCESS stage=COMPLETED status={status} "
                     f"job={job.space_nm}.{job.sql_id}"
@@ -289,3 +304,27 @@ class MigrationOrchestrator:
             f"[Orchestrator] ({job.space_nm}.{job.sql_id}) bind cases prepared: {artifacts.bind_set_json_for_test}"
         )
         return bind_param_names
+
+    @staticmethod
+    def _get_case_insensitive_value(row: dict, key: str):
+        """테스트 결과 row에서 컬럼명을 대소문자 무시하고 조회한다."""
+        lowered = key.lower()
+        for existing_key, value in row.items():
+            if str(existing_key).lower() == lowered:
+                return value
+        return None
+
+    @classmethod
+    def _summarize_test_rows_for_retry(cls, rows: list[dict]) -> str:
+        """재시도 프롬프트용으로 테스트 FAIL 요약 문자열을 만든다."""
+        if not rows:
+            return "no_rows_returned"
+
+        samples: list[str] = []
+        for row in rows[:5]:
+            case_no = cls._get_case_insensitive_value(row, "case_no")
+            from_count = cls._get_case_insensitive_value(row, "from_count")
+            to_count = cls._get_case_insensitive_value(row, "to_count")
+            samples.append(f"CASE_NO={case_no},FROM_COUNT={from_count},TO_COUNT={to_count}")
+
+        return " ; ".join(samples)

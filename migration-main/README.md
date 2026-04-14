@@ -43,6 +43,7 @@ migration-main/
     logger.py                    # 공통 로거
   init_db.py                     # 필수 테이블 접근 점검
   list_mapping_rules.py          # 매핑룰 조회 CLI
+  sync_feedback_rag.py           # 피드백 RAG 벡터 수동 동기화
   requirements.txt
 ```
 
@@ -70,6 +71,7 @@ migration-main/
 처리 순서:
 
 1. 매핑 룰 로딩 (`get_all_mapping_rules`)  
+   - 프롬프트 주입 전 `TARGET_TABLE`(없으면 `FROM SQL` 참조 테이블) 기준으로 관련 FR_TABLE 매핑만 선별
 2. 피드백 예시 로딩 (`feedback_rag_service.retrieve_feedback_examples`)  
 3. TO-BE SQL 생성 (`generate_tobe_sql`)  
 4. `TAG_KIND != SELECT` 이면 TO-BE만 업데이트하고 `PASS` 종료  
@@ -84,6 +86,8 @@ migration-main/
 
 - 최대 3회 재시도 (`retry_count <= 3`)
 - `LLMRateLimitError`, 일반 예외 모두 재시도 대상
+- 테스트 판정 결과가 `FAIL`인 경우도 재시도 대상
+  - `CASE_NO/FROM_COUNT/TO_COUNT` 요약을 `last_error`로 전달해 다음 생성 시 교정 유도
 - 최종 실패 시 `STATUS='FAIL'` 및 마지막 산출물/에러 로그 저장
 
 ## 3) LLM/SQL 처리 규칙
@@ -123,7 +127,7 @@ migration-main/
 ### 5.2 NEXT_SQL_INFO 사용 컬럼
 
 - 읽기:
-  - `TAG_KIND`, `SPACE_NM`, `SQL_ID`, `FR_SQL_TEXT`, `EDIT_FR_SQL`
+  - `TAG_KIND`, `SPACE_NM`, `SQL_ID`, `FR_SQL_TEXT`, `TARGET_TABLE`, `EDIT_FR_SQL`
   - `TO_SQL_TEXT`, `BIND_SQL`, `BIND_SET`, `TEST_SQL`
   - `STATUS`, `LOG`, `UPD_TS`, `EDITED_YN`, `CORRECT_SQL`
 - 쓰기:
@@ -160,10 +164,11 @@ migration-main/
 - `RAG_VECTOR_DB_PATH` (기본: `migration.db`)
 - `RAG_VECTOR_TABLE` (기본: `feedback_rag_index`)
 - `RAG_TOP_K` (기본: `5`)
-- `RAG_SYNC_INTERVAL_SEC` (기본: `300`)
 - `RAG_CORPUS_LIMIT` (기본: `2000`)
 
 ## 7) 실행 방법
+
+Windows 환경에서는 `python` 대신 `py` 실행을 기준으로 사용합니다.
 
 의존성 설치:
 
@@ -174,38 +179,45 @@ pip install -r requirements.txt
 통합 연결 점검(Oracle/LLM/Embedding):
 
 ```bash
-python init_db.py
+py init_db.py
 ```
 
 배치 실행:
 
 ```bash
-python app/main.py
+py app/main.py
+```
+
+RAG 벡터 수동 동기화:
+
+```bash
+py sync_feedback_rag.py
+py sync_feedback_rag.py --limit 500
 ```
 
 매핑룰 조회 유틸:
 
 ```bash
-python list_mapping_rules.py --format table
-python list_mapping_rules.py --fr-table TB_A --to-table TB_B --format json --out rules.json
+py list_mapping_rules.py --format table
+py list_mapping_rules.py --fr-table TB_A --to-table TB_B --format json --out rules.json
 ```
 
 RAG 벡터 인덱스 확인:
 
 ```bash
-python inspect_rag_index.py
-python inspect_rag_index.py --limit 20
-python inspect_rag_index.py --show-vector
+py inspect_rag_index.py
+py inspect_rag_index.py --limit 20
+py inspect_rag_index.py --show-vector
 ```
 
 XML parser 유틸:
 
 ```bash
-python -m app.services.xml_parser_service stage1 --source-dir <mapper_dir> --output-dir <out_dir>
-python -m app.services.xml_parser_service stage2 --output-dir <out_dir>
-python -m app.services.xml_parser_service stage3
-python -m app.services.xml_parser_service stage4
-python -m app.services.xml_parser_service all --source-dir <mapper_dir> --output-dir <out_dir>
+py -m app.services.xml_parser_service stage1 --source-dir <mapper_dir> --output-dir <out_dir>
+py -m app.services.xml_parser_service stage2 --output-dir <out_dir>
+py -m app.services.xml_parser_service stage3
+py -m app.services.xml_parser_service stage4
+py -m app.services.xml_parser_service all --source-dir <mapper_dir> --output-dir <out_dir>
 ```
 
 ## 8) 운영 시 주의사항

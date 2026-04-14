@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT_DIR / ".env")
+# OS 환경변수보다 프로젝트 .env 값을 우선 적용한다.
+load_dotenv(ROOT_DIR / ".env", override=True)
 _CLIENT_INITIALIZED = False
 
 
@@ -32,8 +33,8 @@ def get_connection():
         try:
             oracledb.init_oracle_client(lib_dir=lib_dir)
         except oracledb.ProgrammingError:
-            # init_oracle_client can be called only once per process.
-            # If already initialized elsewhere, continue.
+            # init_oracle_client는 프로세스 내 1회만 호출 가능.
+            # 이미 초기화된 경우 그대로 진행.
             pass
         _CLIENT_INITIALIZED = True
 

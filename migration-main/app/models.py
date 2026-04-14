@@ -14,6 +14,7 @@ class SqlInfoJob:
     space_nm: str
     sql_id: str
     fr_sql_text: str
+    target_table: Optional[str] = None
     edit_fr_sql: Optional[str] = None
     to_sql_text: Optional[str] = None
     bind_sql: Optional[str] = None

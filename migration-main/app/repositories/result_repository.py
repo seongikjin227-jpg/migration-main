@@ -34,16 +34,17 @@ def _row_to_sql_info_job(row) -> SqlInfoJob:
         space_nm=_to_text(row[2]),
         sql_id=_to_text(row[3]),
         fr_sql_text=_to_text(row[4]),
-        edit_fr_sql=_to_optional_text(row[5]),
-        to_sql_text=_to_optional_text(row[6]),
-        bind_sql=_to_optional_text(row[7]),
-        bind_set=_to_optional_text(row[8]),
-        test_sql=_to_optional_text(row[9]),
-        status=_to_optional_text(row[10]),
-        log_text=_to_optional_text(row[11]),
-        upd_ts=row[12],
-        edited_yn=_to_optional_text(row[13]),
-        correct_sql=_to_optional_text(row[14]),
+        target_table=_to_optional_text(row[5]),
+        edit_fr_sql=_to_optional_text(row[6]),
+        to_sql_text=_to_optional_text(row[7]),
+        bind_sql=_to_optional_text(row[8]),
+        bind_set=_to_optional_text(row[9]),
+        test_sql=_to_optional_text(row[10]),
+        status=_to_optional_text(row[11]),
+        log_text=_to_optional_text(row[12]),
+        upd_ts=row[13],
+        edited_yn=_to_optional_text(row[14]),
+        correct_sql=_to_optional_text(row[15]),
     )
 
 
@@ -52,7 +53,7 @@ def get_pending_jobs() -> list[SqlInfoJob]:
     table = get_result_table()
     query = f"""
         SELECT ROWIDTOCHAR(ROWID) AS RID,
-               TAG_KIND, SPACE_NM, SQL_ID, FR_SQL_TEXT, EDIT_FR_SQL,
+               TAG_KIND, SPACE_NM, SQL_ID, FR_SQL_TEXT, TARGET_TABLE, EDIT_FR_SQL,
                TO_SQL_TEXT, BIND_SQL, BIND_SET, TEST_SQL, STATUS, LOG,
                UPD_TS, EDITED_YN, CORRECT_SQL
         FROM {table}

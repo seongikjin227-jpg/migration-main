@@ -161,14 +161,15 @@ def check_embedding_connection(timeout_sec: int = 20) -> HealthResult:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    endpoint = base_url
     payload = {"model": model, "input": ["health check text"]}
     try:
-        response = requests.post(base_url, headers=headers, json=payload, timeout=timeout_sec)
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=timeout_sec)
         if response.status_code >= 400:
             return HealthResult(
                 name="EMBEDDING",
                 ok=False,
-                detail=f"HTTP {response.status_code} from {base_url}: {response.text[:200]}",
+                detail=f"HTTP {response.status_code} from {endpoint}: {response.text[:200]}",
             )
         body = response.json()
         vectors = _extract_embedding_vectors(body)
@@ -182,7 +183,7 @@ def check_embedding_connection(timeout_sec: int = 20) -> HealthResult:
         return HealthResult(
             name="EMBEDDING",
             ok=True,
-            detail=f"connected ({base_url}), model={model}, vectors={len(vectors)}, dim={dim}",
+            detail=f"connected ({endpoint}), model={model}, vectors={len(vectors)}, dim={dim}",
         )
     except Exception as exc:
         return HealthResult(name="EMBEDDING", ok=False, detail=f"{type(exc).__name__}: {exc}")
@@ -222,4 +223,3 @@ def init_db():
 
 if __name__ == "__main__":
     init_db()
-
