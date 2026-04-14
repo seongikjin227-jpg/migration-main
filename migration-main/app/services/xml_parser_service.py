@@ -24,6 +24,11 @@ INCLUDE_PATTERN = re.compile(
     r"|<include\b[^>]*\brefid\s*=\s*['\"]([^'\"]+)['\"][^>]*/\s*>",
     flags=re.IGNORECASE | re.DOTALL,
 )
+_SQL_BLOCK_COMMENT_PATTERN = re.compile(r"/\*.*?\*/", flags=re.DOTALL)
+_SQL_LINE_COMMENT_PATTERN = re.compile(r"--[^\n]*")
+_SQL_SINGLE_QUOTE_PATTERN = re.compile(r"'(?:''|[^'])*'")
+_SQL_MYBATIS_PLACEHOLDER_PATTERN = re.compile(r"[#$]\{\s*[^}]+\s*\}")
+_SQL_XML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
 
 @dataclass
@@ -603,6 +608,226 @@ def _parse_stored_target_table(value: Any) -> list[str]:
     return items
 
 
+def _strip_sql_for_table_parse(sql_text: str) -> str:
+    """테이블명 파싱 전 주석/리터럴/MyBatis 토큰/XML 태그를 제거한다."""
+    text = _to_text(sql_text)
+    text = _SQL_BLOCK_COMMENT_PATTERN.sub(" ", text)
+    text = _SQL_LINE_COMMENT_PATTERN.sub(" ", text)
+    text = _SQL_SINGLE_QUOTE_PATTERN.sub(" ", text)
+    text = _SQL_MYBATIS_PLACEHOLDER_PATTERN.sub(" ", text)
+    text = _SQL_XML_TAG_PATTERN.sub(" ", text)
+    return text
+
+
+def _skip_balanced_parentheses(text: str, start_idx: int) -> int:
+    """`(` 위치에서 시작해 짝이 맞는 `)` 다음 인덱스를 반환한다."""
+    if start_idx >= len(text) or text[start_idx] != "(":
+        return start_idx
+    depth = 0
+    idx = start_idx
+    while idx < len(text):
+        ch = text[idx]
+        if ch == "(":
+            depth += 1
+            idx += 1
+            continue
+        if ch == ")":
+            depth -= 1
+            idx += 1
+            if depth <= 0:
+                return idx
+            continue
+        if ch == "'":
+            idx += 1
+            while idx < len(text):
+                if text[idx] == "'":
+                    idx += 1
+                    if idx < len(text) and text[idx] == "'":
+                        idx += 1
+                        continue
+                    break
+                idx += 1
+            continue
+        idx += 1
+    return idx
+
+
+def _read_sql_identifier(text: str, start_idx: int) -> tuple[str, int]:
+    """`SCHEMA.TABLE` 또는 `"TABLE"` 형태 식별자를 읽는다."""
+    idx = start_idx
+    length = len(text)
+    parts: list[str] = []
+    while idx < length:
+        while idx < length and text[idx].isspace():
+            idx += 1
+        if idx >= length:
+            break
+
+        if text[idx] == '"':
+            end = idx + 1
+            while end < length and text[end] != '"':
+                end += 1
+            part = text[idx : min(end + 1, length)]
+            idx = min(end + 1, length)
+        else:
+            match = re.match(r"[A-Z0-9_$#]+", text[idx:])
+            if not match:
+                break
+            part = match.group(0)
+            idx += len(part)
+
+        parts.append(part)
+        while idx < length and text[idx].isspace():
+            idx += 1
+        if idx < length and text[idx] == ".":
+            parts.append(".")
+            idx += 1
+            continue
+        break
+
+    return "".join(parts), idx
+
+
+def _extract_cte_names(sql_text: str) -> set[str]:
+    """WITH 절에 선언된 CTE 이름을 추출한다."""
+    upper = sql_text.upper().lstrip()
+    if not upper.startswith("WITH "):
+        return set()
+
+    cte_names: set[str] = set()
+    idx = upper.find("WITH") + 4
+    length = len(upper)
+    while idx < length:
+        while idx < length and upper[idx].isspace():
+            idx += 1
+        ident, idx = _read_sql_identifier(upper, idx)
+        normalized = _normalize_table_name(ident)
+        if not normalized:
+            break
+        cte_names.add(normalized)
+        cte_names.add(normalized.split(".")[-1])
+
+        while idx < length and upper[idx].isspace():
+            idx += 1
+        if idx < length and upper[idx] == "(":
+            idx = _skip_balanced_parentheses(upper, idx)
+        while idx < length and upper[idx].isspace():
+            idx += 1
+        if not upper[idx : idx + 2] == "AS":
+            break
+        idx += 2
+        while idx < length and upper[idx].isspace():
+            idx += 1
+        if idx >= length or upper[idx] != "(":
+            break
+        idx = _skip_balanced_parentheses(upper, idx)
+        while idx < length and upper[idx].isspace():
+            idx += 1
+        if idx < length and upper[idx] == ",":
+            idx += 1
+            continue
+        break
+    return cte_names
+
+
+def _extract_from_clause_tables(sql_text: str) -> list[str]:
+    """FROM 절의 comma join 패턴을 포함해 테이블명을 추출한다."""
+    tables: list[str] = []
+    idx = 0
+    upper = sql_text.upper()
+    stop_keywords = (
+        " WHERE ",
+        " GROUP ",
+        " ORDER ",
+        " HAVING ",
+        " CONNECT ",
+        " START ",
+        " UNION ",
+        " MINUS ",
+        " INTERSECT ",
+    )
+
+    while True:
+        match = re.search(r"\bFROM\b", upper[idx:])
+        if not match:
+            break
+        pos = idx + match.start() + len("FROM")
+        while pos < len(upper) and upper[pos].isspace():
+            pos += 1
+        if pos >= len(upper):
+            break
+        if upper[pos] == "(":
+            idx = pos + 1
+            continue
+
+        end = pos
+        depth = 0
+        while end < len(upper):
+            ch = upper[end]
+            if ch == "(":
+                depth += 1
+                end += 1
+                continue
+            if ch == ")":
+                if depth > 0:
+                    depth -= 1
+                end += 1
+                continue
+            if depth == 0:
+                window = upper[end : min(end + 12, len(upper))]
+                if any(window.startswith(keyword) for keyword in stop_keywords):
+                    break
+            end += 1
+
+        clause = upper[pos:end]
+        for chunk in clause.split(","):
+            token = chunk.strip()
+            if not token or token.startswith("("):
+                continue
+            ident, _ = _read_sql_identifier(token, 0)
+            normalized = _normalize_table_name(ident)
+            if normalized:
+                tables.append(normalized)
+
+        idx = end
+    return tables
+
+
+def _extract_target_tables_from_sql(sql_text: str) -> list[str]:
+    """SQL에서 target table 후보를 추출한다. EDIT_FR_SQL 우선 입력을 권장한다."""
+    cleaned = _strip_sql_for_table_parse(sql_text)
+    upper = cleaned.upper()
+    cte_names = _extract_cte_names(cleaned)
+    ignored = {"DUAL"} | cte_names
+
+    candidates: list[str] = []
+
+    def _add_candidate(token: str) -> None:
+        normalized = _normalize_table_name(token)
+        if not normalized:
+            return
+        table_short = normalized.split(".")[-1]
+        if normalized in ignored or table_short in ignored:
+            return
+        if normalized not in candidates:
+            candidates.append(normalized)
+
+    for pattern in (
+        r"\bUPDATE\s+([A-Z0-9_$#\"\.]+)",
+        r"\bINSERT\s+INTO\s+([A-Z0-9_$#\"\.]+)",
+        r"\bDELETE\s+FROM\s+([A-Z0-9_$#\"\.]+)",
+        r"\bMERGE\s+INTO\s+([A-Z0-9_$#\"\.]+)",
+        r"\bJOIN\s+([A-Z0-9_$#\"\.]+)",
+    ):
+        for match in re.finditer(pattern, upper):
+            _add_candidate(match.group(1))
+
+    for table_name in _extract_from_clause_tables(cleaned):
+        _add_candidate(table_name)
+
+    return candidates
+
+
 def _load_test_mapping_tables_from_env() -> set[str]:
     """
     Load test mapping tables from env var TEST_MAPPING_TABLES.
@@ -672,22 +897,25 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
             f"Invalid sample values: {sample}"
         )
 
-    rows: list[tuple[str, str, str, Any]] = []
+    rows: list[tuple[str, str, str, Any, Any, Any]] = []
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
             f"""
-            SELECT ROWIDTOCHAR(ROWID), TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID), TARGET_TABLE
+            SELECT ROWIDTOCHAR(ROWID), TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID),
+                   TARGET_TABLE, FR_SQL_TEXT, EDIT_FR_SQL
             FROM {result_table}
             """
         )
         rows.extend(cursor.fetchall())
 
     to_delete_rowids: list[str] = []
+    target_table_updates: list[tuple[str, str]] = []
     deleted_not_active = 0
     deleted_not_in_test_mapping = 0
+    updated_target_table = 0
 
-    for rowid, space_nm, sql_id, target_table_value in rows:
+    for rowid, space_nm, sql_id, target_table_value, fr_sql_text, edit_fr_sql in rows:
         space_text = _to_text(space_nm).strip()
         sql_text = _to_text(sql_id).strip()
         full_id = f"{space_text}.{sql_text}".upper()
@@ -696,7 +924,17 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
             deleted_not_active += 1
             continue
 
-        target_tables = _parse_stored_target_table(target_table_value)
+        stored_target_tables = _parse_stored_target_table(target_table_value)
+        base_sql = (_to_text(edit_fr_sql).strip() or _to_text(fr_sql_text))
+        parsed_target_tables = _extract_target_tables_from_sql(base_sql)
+        target_tables = parsed_target_tables if parsed_target_tables else stored_target_tables
+
+        serialized_target_table = json.dumps(target_tables, ensure_ascii=False) if target_tables else ""
+        current_serialized = _to_text(target_table_value).strip()
+        if serialized_target_table != current_serialized:
+            target_table_updates.append((serialized_target_table, _to_text(rowid)))
+            updated_target_table += 1
+
         if not target_tables:
             to_delete_rowids.append(_to_text(rowid))
             deleted_not_in_test_mapping += 1
@@ -713,6 +951,20 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
         if not all_mapped:
             to_delete_rowids.append(_to_text(rowid))
             deleted_not_in_test_mapping += 1
+
+    if target_table_updates:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                f"""
+                UPDATE {result_table}
+                SET TARGET_TABLE = :1,
+                    UPD_TS = CURRENT_TIMESTAMP
+                WHERE ROWID = CHARTOROWID(:2)
+                """,
+                target_table_updates,
+            )
+            conn.commit()
 
     if to_delete_rowids:
         with get_connection() as conn:
@@ -731,12 +983,14 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
 
     logger.info(
         "[XMLParser] Stage4 completed "
-        f"(deleted_total={len(to_delete_rowids)}, "
+        f"(updated_target_table={updated_target_table}, "
+        f"deleted_total={len(to_delete_rowids)}, "
         f"deleted_not_active={deleted_not_active}, "
         f"deleted_not_in_test_mapping={deleted_not_in_test_mapping}, "
         f"remaining_total={remaining_total})"
     )
     return {
+        "updated_target_table": updated_target_table,
         "deleted_total": len(to_delete_rowids),
         "deleted_not_active": deleted_not_active,
         "deleted_not_in_test_mapping": deleted_not_in_test_mapping,
