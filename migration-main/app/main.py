@@ -18,6 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.batch.runner import poll_database
 from app.logger import logger
 from app.runtime import clear_stop, request_stop
+from app.services.feedback_rag_service import feedback_rag_service
 
 
 class _SkipMaxInstancesLogFilter(logging.Filter):
@@ -35,6 +36,29 @@ def _attach_filter_to_logger_and_handlers(logger_name: str, log_filter: logging.
         handler.addFilter(log_filter)
 
 
+def _sync_feedback_rag_on_startup() -> None:
+    """배치 시작 전에 CORRECT_SQL 기반 RAG 인덱스를 자동 동기화한다."""
+    logger.info("[Startup] RAG sync started (source=NEXT_SQL_INFO.CORRECT_SQL)")
+    try:
+        result = feedback_rag_service.sync_index(limit=None)
+        logger.info(
+            "[Startup] RAG sync completed "
+            f"(source_rows={result['source_rows']}, "
+            f"upserted={result['upserted']}, "
+            f"skipped_unchanged={result['skipped_unchanged']}, "
+            f"skipped_no_correct_sql={result['skipped_no_correct_sql']}, "
+            f"deleted={result['deleted']})"
+        )
+        if result["source_rows"] <= 0:
+            logger.warning(
+                "[Startup] RAG source rows are empty. "
+                "No CORRECT_SQL corpus found; retrieval examples may be empty."
+            )
+    except Exception as exc:
+        logger.error(f"[Startup] RAG sync failed: {exc}")
+        logger.warning("[Startup] Continuing without startup sync; scheduler will still start.")
+
+
 if __name__ == "__main__":
     logger.info("====================================")
     logger.info(" Oracle SQL Migration Agent Started ")
@@ -46,6 +70,8 @@ if __name__ == "__main__":
     _attach_filter_to_logger_and_handlers("apscheduler.executors.default", skip_max_instances_filter)
     for handler in logging.getLogger().handlers:
         handler.addFilter(skip_max_instances_filter)
+
+    _sync_feedback_rag_on_startup()
 
     clear_stop()
     scheduler = BlockingScheduler()

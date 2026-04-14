@@ -54,6 +54,9 @@ migration-main/
 - `app/main.py`
 - APScheduler `interval=1 minute`
 - 첫 실행 `next_run_time=datetime.now()`
+- 스케줄러 시작 전 RAG 인덱스 자동 동기화 수행
+  - 원천: `NEXT_SQL_INFO`의 `CORRECT_SQL` 코퍼스
+  - 시작 로그에 `source_rows/upserted/skipped/deleted` 통계 출력
 - SIGINT/SIGTERM 처리:
   - 1회: graceful shutdown 요청
   - 2회: 강제 종료
@@ -195,6 +198,10 @@ py sync_feedback_rag.py
 py sync_feedback_rag.py --limit 500
 ```
 
+참고:
+- 배치 시작 시 자동 동기화가 1회 수행됩니다.
+- 위 명령은 필요할 때 수동 재동기화(강제 refresh) 용도로 사용합니다.
+
 매핑룰 조회 유틸:
 
 ```bash
@@ -269,7 +276,7 @@ py -m app.services.xml_parser_service all --source-dir <mapper_dir> --output-dir
 
 - 현재 설계상 신규 건 자동 처리보다 "실패 건 재처리 루프"에 최적화되어 있습니다.
 - `TAG_KIND != SELECT`는 실행 검증 없이 TO-BE 생성만 하고 `PASS`로 종료됩니다.
-- LLM 응답 품질은 프롬프트와 `feedback_examples`(`EDITED_YN`, `CORRECT_SQL`)에 강하게 의존합니다.
+- LLM 응답 품질은 프롬프트와 RAG 검색 예시(`CORRECT_SQL` 기반)에 강하게 의존합니다.
 
 ## 9) README 동기화 원칙
 

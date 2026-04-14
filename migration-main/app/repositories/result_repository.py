@@ -120,37 +120,6 @@ def update_cycle_result(
         conn.commit()
 
 
-def get_feedback_examples(job: SqlInfoJob, limit: int = 5) -> list[dict[str, str]]:
-    """동일 (SPACE_NM, SQL_ID)의 최근 수동보정 예시를 조회한다."""
-    table = get_result_table()
-    safe_limit = max(1, min(limit, 20))
-    query = f"""
-        SELECT EDITED_YN, CORRECT_SQL, TO_SQL_TEXT
-        FROM (
-            SELECT EDITED_YN, CORRECT_SQL, TO_SQL_TEXT
-            FROM {table}
-            WHERE TO_CHAR(SPACE_NM) = :1
-              AND TO_CHAR(SQL_ID) = :2
-              AND (EDITED_YN = 'Y' OR CORRECT_SQL IS NOT NULL)
-            ORDER BY UPD_TS DESC
-        )
-        WHERE ROWNUM <= {safe_limit}
-    """
-    examples: list[dict[str, str]] = []
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query, [job.space_nm, job.sql_id])
-        for row in cursor.fetchall():
-            examples.append(
-                {
-                    "edited_yn": _to_text(row[0]),
-                    "correct_sql": _to_text(row[1]),
-                    "generated_sql": _to_text(row[2]),
-                }
-            )
-    return examples
-
-
 def get_feedback_corpus_rows(limit: int = 2000) -> list[dict[str, str]]:
     """RAG 인덱싱용 정답 SQL 코퍼스를 조회한다.
 

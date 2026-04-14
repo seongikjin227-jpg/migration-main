@@ -85,12 +85,12 @@ class MigrationOrchestrator:
                     stage = "LOAD_RULES"
                     mapping_rules = get_all_mapping_rules()
 
-                stage = "LOAD_FEEDBACK"
+                stage = "LOAD_RAG_FEEDBACK"
                 feedback_examples = feedback_rag_service.retrieve_feedback_examples(
                     job=job,
                     last_error=last_error,
                 )
-                self._log_stage(job_key, stage, "completed", f"(feedback_examples={len(feedback_examples)})")
+                self._log_stage(job_key, stage, "completed", f"(rag_examples={len(feedback_examples)})")
 
                 stage = "GENERATE_TOBE_SQL"
                 artifacts.tobe_sql = generate_tobe_sql(
