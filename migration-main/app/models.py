@@ -28,7 +28,7 @@ class SqlInfoJob:
 
     @property
     def source_sql(self) -> str:
-        """개발자 보정 SQL(EDIT_FR_SQL)을 우선 사용하고, 없으면 원본 SQL을 사용한다."""
+        """<include>문 보정 SQL(EDIT_FR_SQL)을 우선 사용하고, 없으면 원본 SQL을 사용한다."""
         edited = (self.edit_fr_sql or "").strip()
         return edited if edited else (self.fr_sql_text or "")
 

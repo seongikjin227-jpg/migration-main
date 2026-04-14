@@ -897,7 +897,7 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
             f"Invalid sample values: {sample}"
         )
 
-    rows: list[tuple[str, str, str, Any, Any, Any]] = []
+    rows: list[tuple[str, str, str, str, str, str]] = []
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -907,7 +907,17 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
             FROM {result_table}
             """
         )
-        rows.extend(cursor.fetchall())
+        for row in cursor.fetchall():
+            rows.append(
+                (
+                    _to_text(row[0]).strip(),
+                    _to_text(row[1]).strip(),
+                    _to_text(row[2]).strip(),
+                    _to_text(row[3]),
+                    _to_text(row[4]),
+                    _to_text(row[5]),
+                )
+            )
 
     to_delete_rowids: list[str] = []
     target_table_updates: list[tuple[str, str]] = []
@@ -916,27 +926,27 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
     updated_target_table = 0
 
     for rowid, space_nm, sql_id, target_table_value, fr_sql_text, edit_fr_sql in rows:
-        space_text = _to_text(space_nm).strip()
-        sql_text = _to_text(sql_id).strip()
+        space_text = space_nm
+        sql_text = sql_id
         full_id = f"{space_text}.{sql_text}".upper()
         if full_id not in active_full_ids:
-            to_delete_rowids.append(_to_text(rowid))
+            to_delete_rowids.append(rowid)
             deleted_not_active += 1
             continue
 
         stored_target_tables = _parse_stored_target_table(target_table_value)
-        base_sql = (_to_text(edit_fr_sql).strip() or _to_text(fr_sql_text))
+        base_sql = (edit_fr_sql.strip() or fr_sql_text)
         parsed_target_tables = _extract_target_tables_from_sql(base_sql)
         target_tables = parsed_target_tables if parsed_target_tables else stored_target_tables
 
         serialized_target_table = json.dumps(target_tables, ensure_ascii=False) if target_tables else ""
-        current_serialized = _to_text(target_table_value).strip()
+        current_serialized = target_table_value.strip()
         if serialized_target_table != current_serialized:
-            target_table_updates.append((serialized_target_table, _to_text(rowid)))
+            target_table_updates.append((serialized_target_table, rowid))
             updated_target_table += 1
 
         if not target_tables:
-            to_delete_rowids.append(_to_text(rowid))
+            to_delete_rowids.append(rowid)
             deleted_not_in_test_mapping += 1
             continue
 
@@ -949,7 +959,7 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
                 break
 
         if not all_mapped:
-            to_delete_rowids.append(_to_text(rowid))
+            to_delete_rowids.append(rowid)
             deleted_not_in_test_mapping += 1
 
     if target_table_updates:

@@ -220,6 +220,51 @@ py -m app.services.xml_parser_service stage4
 py -m app.services.xml_parser_service all --source-dir <mapper_dir> --output-dir <out_dir>
 ```
 
+### 7.1 XML parser stage 상세
+
+`all`은 `stage1 -> stage2 -> stage3 -> stage4` 순서로 고정 실행됩니다.
+
+`stage1` (`parse_mapper_dir_to_json`)
+- 입력: `MAPPER_XML_SOURCE_DIR` (또는 `--source-dir`), `ACTIVE_SQL_ID_TABLE`, `ACTIVE_SQL_ID_COLUMN`
+- 처리:
+  - mapper XML의 `select/insert/update/delete/sql` 태그를 파싱
+  - `NAMESPACE.SQL_ID` 기준으로 ACTIVE 테이블의 `C/R/U/D_TABLES`를 조회해 `TARGET_TABLE` 구성
+  - 파일별 JSON payload 생성 (`XML_PARSER_DATA_DIR` 또는 `--output-dir`)
+- 출력: stage1 JSON 파일들
+
+`stage2` (`upsert_json_to_next_sql_info`)
+- 입력: stage1 JSON
+- 처리:
+  - `NEXT_SQL_INFO`에 `MERGE` upsert
+  - 키: `(SPACE_NM, SQL_ID)`
+  - 반영 컬럼: `TAG_KIND`, `FR_SQL_TEXT`, `TARGET_TABLE`, `UPD_TS`
+- 출력: `NEXT_SQL_INFO` 최신화
+
+`stage3` (`expand_include_to_edit_sql`)
+- 입력: `NEXT_SQL_INFO`의 `FR_SQL_TEXT`, `EDIT_FR_SQL`
+- 처리:
+  - `<include refid="...">`를 재귀적으로 해석
+  - 기준 SQL은 `EDIT_FR_SQL` 우선, 없으면 `FR_SQL_TEXT`
+  - 확장 결과를 `EDIT_FR_SQL`에 저장
+- 출력: include가 풀린 `EDIT_FR_SQL`
+
+`stage4` (`cleanup_next_sql_info_rows`)
+- 입력: `ACTIVE_SQL_ID_TABLE`, `ACTIVE_SQL_ID_COLUMN`, `TEST_MAPPING_TABLES`
+- 처리:
+  - ACTIVE full id(`NAMESPACE.SQL_ID`)에 없는 row 삭제
+  - `TARGET_TABLE` 재계산:
+    - `EDIT_FR_SQL` 우선, 없으면 `FR_SQL_TEXT`
+    - SQL 본문에서 `FROM/JOIN/UPDATE/INSERT INTO/DELETE FROM/MERGE INTO` 기반 직접 파싱
+    - CTE 이름(`WITH ... AS`)과 `DUAL` 제외
+  - 재계산된 `TARGET_TABLE`을 DB에 반영 후,
+  - `TEST_MAPPING_TABLES`에 포함되지 않는 테이블이 하나라도 있으면 row 삭제
+- 출력: 테스트 범위 밖 row 정리 + `TARGET_TABLE` 보정
+
+운영 팁:
+- `TEST_MAPPING_TABLES`는 `TB_A,TB_B` 또는 JSON 배열 형식 모두 허용됩니다.
+- `ACTIVE_SQL_ID_COLUMN` 값은 반드시 `NAMESPACE.SQL_ID` 형식이어야 합니다.
+- stage4는 삭제 작업을 수행하므로, 대량 실행 전 백업/검증 쿼리를 권장합니다.
+
 ## 8) 운영 시 주의사항
 
 - 현재 설계상 신규 건 자동 처리보다 "실패 건 재처리 루프"에 최적화되어 있습니다.
