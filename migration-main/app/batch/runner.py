@@ -8,7 +8,7 @@ import traceback
 
 from app.agent.mapper_sql_agent import MigrationOrchestrator
 from app.logger import logger
-from app.repositories.result_repository import get_pending_jobs
+from app.repositories.result_repository import get_pending_jobs, increment_batch_count
 from app.runtime import is_stop_requested
 
 
@@ -37,6 +37,7 @@ def poll_database():
             if is_stop_requested():
                 logger.info("[Scheduler] Stop requested. Aborting remaining jobs in this cycle.")
                 break
+            increment_batch_count(job.row_id)
             orchestrator.process_job(job)
 
     except Exception as exc:

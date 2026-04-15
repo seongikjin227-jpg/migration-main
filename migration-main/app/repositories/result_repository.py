@@ -70,6 +70,21 @@ def get_pending_jobs() -> list[SqlInfoJob]:
     return jobs
 
 
+def increment_batch_count(row_id: str) -> None:
+    """해당 row의 BATCH_CNT를 1 증가시킨다."""
+    table = get_result_table()
+    query = f"""
+        UPDATE {table}
+        SET BATCH_CNT = NVL(BATCH_CNT, 0) + 1,
+            UPD_TS = CURRENT_TIMESTAMP
+        WHERE ROWID = CHARTOROWID(:1)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, [row_id])
+        conn.commit()
+
+
 def update_cycle_result(
     row_id: str,
     tobe_sql: str,
