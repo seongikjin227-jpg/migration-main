@@ -2,6 +2,8 @@
 
 import json
 import re
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 
@@ -214,4 +216,13 @@ def build_bind_sets(
 
 def bind_sets_to_json(bind_sets: list[dict[str, Any]]) -> str:
     """bind_set을 프롬프트/DB 저장용 JSON 문자열로 직렬화한다."""
-    return json.dumps(bind_sets, ensure_ascii=False)
+    return json.dumps(bind_sets, ensure_ascii=False, default=_json_default)
+
+
+def _json_default(value: Any):
+    """JSON 직렬화 불가 타입을 안전한 표현으로 변환한다."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return str(value)

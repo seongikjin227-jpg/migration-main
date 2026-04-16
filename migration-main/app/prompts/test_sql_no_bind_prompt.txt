@@ -12,6 +12,7 @@
 
 작업:
 - bind parameter가 없는 경우, from_sql과 tobe_sql을 각각 그대로 실행했을 때의 COUNT를 비교하는 Oracle SQL 1문장 생성
+- 목표 DB는 Oracle 19c
 
 필수 규칙:
 - SQL 1문장만 출력 (설명/주석/markdown/json 금지)
@@ -22,6 +23,8 @@
 - placeholder/tag 해소 외 로직은 원본 유지
 - COUNT-only surrogate 쿼리로 단순화 금지
 - `BIND_CASES`, `PARAM_CASES` 같은 synthetic bind CTE/table 생성 금지
+- nested WITH를 만들지 말 것 (WITH 안에 또 WITH 금지)
+- CROSS APPLY/OUTER APPLY 사용 금지
 
 출력 형식 계약(반드시 준수):
 - 최종 응답은 SQL 한 문장만

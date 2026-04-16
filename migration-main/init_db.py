@@ -1,9 +1,9 @@
-"""통합 연결 점검 스크립트.
+﻿"""?듯빀 ?곌껐 ?먭? ?ㅽ겕由쏀듃.
 
-점검 대상:
-1) Oracle DB 연결/필수 테이블 접근
-2) LLM API 연결 (models 엔드포인트 기준)
-3) 임베딩 API 연결 (샘플 임베딩 1건 생성)
+?먭? ???
+1) Oracle DB ?곌껐/?꾩닔 ?뚯씠釉??묎렐
+2) LLM API ?곌껐 (models ?붾뱶?ъ씤??湲곗?)
+3) ?꾨쿋??API ?곌껐 (?섑뵆 ?꾨쿋??1嫄??앹꽦)
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from app.logger import logger
 
 @dataclass
 class HealthResult:
-    """연결 점검 결과 1건."""
+    """?곌껐 ?먭? 寃곌낵 1嫄?"""
 
     name: str
     ok: bool
@@ -34,17 +34,26 @@ class HealthResult:
 
 
 def _join_url(base_url: str, suffix: str) -> str:
-    """base URL 뒤에 suffix를 안전하게 붙인다."""
+    """base URL ?ㅼ뿉 suffix瑜??덉쟾?섍쾶 遺숈씤??"""
     return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"
 
 
-def _extract_embedding_vectors(body: Any) -> list[list[float]]:
-    """임베딩 API 응답에서 벡터 목록을 파싱한다.
+def _normalize_anthropic_base_url(raw_base_url: str) -> str:
+    """Normalize Anthropic base URL to API root."""
+    normalized = raw_base_url.strip().rstrip("/")
+    if normalized.endswith("/v1/messages"):
+        return normalized[: -len("/v1/messages")]
+    if normalized.endswith("/v1"):
+        return normalized[: -len("/v1")]
+    return normalized
 
-    지원 형식:
-    - OpenAI 호환: {"data":[{"embedding":[...]}]}
-    - 일반 형식: {"embeddings":[[...],[...]]}
-    - 단일 벡터: {"embedding":[...]}
+def _extract_embedding_vectors(body: Any) -> list[list[float]]:
+    """?꾨쿋??API ?묐떟?먯꽌 踰≫꽣 紐⑸줉???뚯떛?쒕떎.
+
+    吏???뺤떇:
+    - OpenAI ?명솚: {"data":[{"embedding":[...]}]}
+    - ?쇰컲 ?뺤떇: {"embeddings":[[...],[...]]}
+    - ?⑥씪 踰≫꽣: {"embedding":[...]}
     """
     if isinstance(body, dict):
         data = body.get("data")
@@ -73,7 +82,7 @@ def _extract_embedding_vectors(body: Any) -> list[list[float]]:
 
 
 def check_oracle_connection() -> HealthResult:
-    """Oracle 연결과 필수 테이블 접근 여부를 점검한다."""
+    """Oracle ?곌껐怨??꾩닔 ?뚯씠釉??묎렐 ?щ?瑜??먭??쒕떎."""
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -103,9 +112,9 @@ def check_oracle_connection() -> HealthResult:
 
 
 def check_llm_connection(timeout_sec: int = 15) -> HealthResult:
-    """LLM API 접근 가능 여부를 점검한다.
+    """LLM API ?묎렐 媛???щ?瑜??먭??쒕떎.
 
-    기본 점검 경로:
+    湲곕낯 ?먭? 寃쎈줈:
     - {LLM_BASE_URL}/models
     """
     base_url = os.getenv("LLM_BASE_URL", "").strip()
@@ -116,8 +125,17 @@ def check_llm_connection(timeout_sec: int = 15) -> HealthResult:
     if not api_key:
         return HealthResult(name="LLM", ok=False, detail="LLM_API_KEY is not set")
 
-    endpoint = _join_url(base_url, "models")
-    headers = {"Authorization": f"Bearer {api_key}"}
+    is_anthropic = ("anthropic.com" in base_url.lower()) or model.lower().startswith("claude")
+    if is_anthropic:
+        normalized_base = _normalize_anthropic_base_url(base_url)
+        endpoint = _join_url(normalized_base, "/v1/models")
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+    else:
+        endpoint = _join_url(base_url, "models")
+        headers = {"Authorization": f"Bearer {api_key}"}
 
     try:
         response = requests.get(endpoint, headers=headers, timeout=timeout_sec)
@@ -150,7 +168,7 @@ def check_llm_connection(timeout_sec: int = 15) -> HealthResult:
 
 
 def check_embedding_connection(timeout_sec: int = 20) -> HealthResult:
-    """임베딩 API 접근 및 샘플 벡터 생성 여부를 점검한다."""
+    """?꾨쿋??API ?묎렐 諛??섑뵆 踰≫꽣 ?앹꽦 ?щ?瑜??먭??쒕떎."""
     base_url = os.getenv("RAG_EMBED_BASE_URL", "").strip()
     api_key = os.getenv("RAG_EMBED_API_KEY", "").strip()
     model = os.getenv("RAG_EMBED_MODEL", "BAAI/bge-m3").strip()
@@ -190,7 +208,7 @@ def check_embedding_connection(timeout_sec: int = 20) -> HealthResult:
 
 
 def run_health_checks() -> list[HealthResult]:
-    """전체 연결 점검을 수행한다."""
+    """?꾩껜 ?곌껐 ?먭????섑뻾?쒕떎."""
     results = [
         check_oracle_connection(),
         check_llm_connection(),
@@ -200,9 +218,9 @@ def run_health_checks() -> list[HealthResult]:
 
 
 def init_db():
-    """기존 스크립트 호환용 진입점.
+    """湲곗〈 ?ㅽ겕由쏀듃 ?명솚??吏꾩엯??
 
-    - Oracle만이 아니라 LLM/Embedding 연결 상태도 함께 출력한다.
+    - Oracle留뚯씠 ?꾨땲??LLM/Embedding ?곌껐 ?곹깭???④퍡 異쒕젰?쒕떎.
     """
     results = run_health_checks()
     logger.info("========== Connection Health Check ==========")
@@ -223,3 +241,5 @@ def init_db():
 
 if __name__ == "__main__":
     init_db()
+
+

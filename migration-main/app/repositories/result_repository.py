@@ -1,4 +1,4 @@
-"""NEXT_SQL_INFO 작업 조회/결과 저장 리포지토리."""
+﻿"""NEXT_SQL_INFO ?묒뾽 議고쉶/寃곌낵 ???由ы룷吏?좊━."""
 
 from app.config import get_connection, get_result_table
 from app.models import SqlInfoJob
@@ -7,7 +7,7 @@ _COLUMN_LENGTH_CACHE: dict[str, dict[str, int]] = {}
 
 
 def _to_text(value, default: str = "") -> str:
-    """DB 드라이버 값(LOB 포함)을 문자열로 정규화한다."""
+    """DB ?쒕씪?대쾭 媛?LOB ?ы븿)??臾몄옄?대줈 ?뺢퇋?뷀븳??"""
     if value is None:
         return default
     if hasattr(value, "read"):
@@ -20,14 +20,14 @@ def _to_text(value, default: str = "") -> str:
 
 
 def _to_optional_text(value) -> str | None:
-    """NULL은 None으로 유지하고, 값이 있으면 문자열로 변환한다."""
+    """NULL? None?쇰줈 ?좎??섍퀬, 媛믪씠 ?덉쑝硫?臾몄옄?대줈 蹂?섑븳??"""
     if value is None:
         return None
     return _to_text(value)
 
 
 def _row_to_sql_info_job(row) -> SqlInfoJob:
-    """DB row 튜플을 SqlInfoJob으로 매핑한다."""
+    """DB row ?쒗뵆??SqlInfoJob?쇰줈 留ㅽ븨?쒕떎."""
     return SqlInfoJob(
         row_id=row[0],
         tag_kind=_to_text(row[1]),
@@ -49,7 +49,7 @@ def _row_to_sql_info_job(row) -> SqlInfoJob:
 
 
 def get_pending_jobs() -> list[SqlInfoJob]:
-    """재처리 대상(`STATUS='FAIL'`) 작업 목록을 조회한다."""
+    """?ъ쿂由????`STATUS='FAIL'`) ?묒뾽 紐⑸줉??議고쉶?쒕떎."""
     table = get_result_table()
     query = f"""
         SELECT ROWIDTOCHAR(ROWID) AS RID,
@@ -73,17 +73,24 @@ def get_pending_jobs() -> list[SqlInfoJob]:
 def increment_batch_count(row_id: str) -> None:
     """해당 row의 BATCH_CNT를 1 증가시킨다."""
     table = get_result_table()
-    query = f"""
-        UPDATE {table}
-        SET BATCH_CNT = NVL(BATCH_CNT, 0) + 1,
-            UPD_TS = CURRENT_TIMESTAMP
-        WHERE ROWID = CHARTOROWID(:1)
-    """
+    lengths = _get_column_data_lengths(table)
+    if "BATCH_CNT" in lengths:
+        query = f"""
+            UPDATE {table}
+            SET BATCH_CNT = NVL(BATCH_CNT, 0) + 1,
+                UPD_TS = CURRENT_TIMESTAMP
+            WHERE ROWID = CHARTOROWID(:1)
+        """
+    else:
+        query = f"""
+            UPDATE {table}
+            SET UPD_TS = CURRENT_TIMESTAMP
+            WHERE ROWID = CHARTOROWID(:1)
+        """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, [row_id])
         conn.commit()
-
 
 def update_cycle_result(
     row_id: str,
@@ -94,7 +101,7 @@ def update_cycle_result(
     status: str,
     final_log: str,
 ):
-    """ROWID 기준으로 산출물/상태/로그를 갱신한다."""
+    """ROWID 湲곗??쇰줈 ?곗텧臾??곹깭/濡쒓렇瑜?媛깆떊?쒕떎."""
     table = get_result_table()
     payload = _fit_payload_to_column_limits(
         table=table,
@@ -136,10 +143,10 @@ def update_cycle_result(
 
 
 def get_feedback_corpus_rows(limit: int = 2000) -> list[dict[str, str]]:
-    """RAG 인덱싱용 정답 SQL 코퍼스를 조회한다.
+    """RAG ?몃뜳?깆슜 ?뺣떟 SQL 肄뷀띁?ㅻ? 議고쉶?쒕떎.
 
-    - 사람이 수정했거나(`EDITED_YN='Y'`) 정답 SQL(`CORRECT_SQL`)이 있는 데이터만 대상.
-    - 코퍼스 동기화 비용을 제어하기 위해 limit 상한을 둔다.
+    - ?щ엺???섏젙?덇굅??`EDITED_YN='Y'`) ?뺣떟 SQL(`CORRECT_SQL`)???덈뒗 ?곗씠?곕쭔 ???
+    - 肄뷀띁???숆린??鍮꾩슜???쒖뼱?섍린 ?꾪빐 limit ?곹븳???붾떎.
     """
     table = get_result_table()
     safe_limit = max(1, min(limit, 20000))
@@ -190,7 +197,7 @@ def _fit_payload_to_column_limits(
     table: str,
     values: dict[str, str | None],
 ) -> dict[str, str | None]:
-    """비 LOB 컬럼은 byte 길이를 맞춰 잘라 저장 실패를 방지한다."""
+    """鍮?LOB 而щ읆? byte 湲몄씠瑜?留욎떠 ?섎씪 ????ㅽ뙣瑜?諛⑹??쒕떎."""
     lengths = _get_column_data_lengths(table)
     fitted: dict[str, str | None] = {}
     for column, value in values.items():
@@ -204,7 +211,7 @@ def _fit_payload_to_column_limits(
 
 
 def _get_column_data_lengths(table: str) -> dict[str, int]:
-    """USER_TAB_COLUMNS에서 컬럼 길이를 읽어 캐시한다."""
+    """USER_TAB_COLUMNS?먯꽌 而щ읆 湲몄씠瑜??쎌뼱 罹먯떆?쒕떎."""
     normalized_table = table.upper()
     if normalized_table in _COLUMN_LENGTH_CACHE:
         return _COLUMN_LENGTH_CACHE[normalized_table]
@@ -221,7 +228,7 @@ def _get_column_data_lengths(table: str) -> dict[str, int]:
         for col_name, data_type, data_length in cursor.fetchall():
             col = _to_text(col_name).upper()
             dtype = _to_text(data_type).upper()
-            # CLOB은 길이 자르기를 적용하지 않는다.
+            # CLOB? 湲몄씠 ?먮Ⅴ湲곕? ?곸슜?섏? ?딅뒗??
             if "CLOB" in dtype:
                 continue
             try:
@@ -234,7 +241,7 @@ def _get_column_data_lengths(table: str) -> dict[str, int]:
 
 
 def _truncate_utf8_by_bytes(text: str, byte_limit: int) -> str:
-    """UTF-8 byte 기준으로 문자열을 잘라 유효한 문자 경계를 유지한다."""
+    """UTF-8 byte 湲곗??쇰줈 臾몄옄?댁쓣 ?섎씪 ?좏슚??臾몄옄 寃쎄퀎瑜??좎??쒕떎."""
     if byte_limit <= 0:
         return ""
     encoded = text.encode("utf-8", errors="ignore")

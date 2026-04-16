@@ -1,6 +1,7 @@
-"""단일 migration 작업의 생성/검증 파이프라인을 수행하는 오케스트레이터."""
+﻿"""?⑥씪 migration ?묒뾽???앹꽦/寃利??뚯씠?꾨씪?몄쓣 ?섑뻾?섎뒗 ?ㅼ??ㅽ듃?덉씠??"""
 
 import json
+import random
 import time
 from dataclasses import dataclass
 
@@ -28,10 +29,10 @@ from app.services.validation_service import (
 
 @dataclass
 class _AttemptArtifacts:
-    """재시도 중 마지막 산출물을 보관한다.
+    """?ъ떆??以?留덉?留??곗텧臾쇱쓣 蹂닿??쒕떎.
 
-    모든 재시도가 실패한 경우에도 마지막 생성 결과를 DB에 저장해
-    원인 분석과 수동 보정이 가능하도록 한다.
+    紐⑤뱺 ?ъ떆?꾧? ?ㅽ뙣??寃쎌슦?먮룄 留덉?留??앹꽦 寃곌낵瑜?DB????ν빐
+    ?먯씤 遺꾩꽍怨??섎룞 蹂댁젙??媛?ν븯?꾨줉 ?쒕떎.
     """
 
     tobe_sql: str = ""
@@ -42,24 +43,17 @@ class _AttemptArtifacts:
 
 
 class MigrationOrchestrator:
-    """NEXT_SQL_INFO 1건의 전체 생명주기를 처리한다.
+    """NEXT_SQL_INFO 1嫄댁쓽 ?꾩껜 ?앸챸二쇨린瑜?泥섎━?쒕떎.
 
-    단계:
-    1) 매핑 룰/피드백 로드
-    2) TO-BE SQL 생성
-    3) bind 세트 생성(필요 시)
-    4) test SQL 생성/실행
-    5) PASS/FAIL 판정 후 결과 저장
-    """
+    ?④퀎:
+    1) 留ㅽ븨 猷??쇰뱶諛?濡쒕뱶
+    2) TO-BE SQL ?앹꽦
+    3) bind ?명듃 ?앹꽦(?꾩슂 ??
+    4) test SQL ?앹꽦/?ㅽ뻾
+    5) PASS/FAIL ?먯젙 ??寃곌낵 ???    """
 
     def process_job(self, job):
-        """Job 1건을 끝까지 처리한다.
-
-        재시도 정책:
-        - 최대 3회 재시도
-        - 각 재시도에서 마지막 에러를 프롬프트 컨텍스트에 전달
-        - 최종 실패 시 마지막 산출물(TO/BIND/TEST SQL)과 함께 FAIL 저장
-        """
+        """Job 1건을 끝까지 처리한다."""
         logger.info("\n==========================================")
         logger.info(f"[Orchestrator] Starting job ({job.space_nm}.{job.sql_id})")
         job_key = f"{job.space_nm}.{job.sql_id}"
@@ -72,8 +66,9 @@ class MigrationOrchestrator:
         max_retries = 3
         last_error = None
         stage = "INIT"
-        # 매핑 룰은 한 프로세스 내에서 자주 변하지 않으므로 재시도마다 다시 읽지 않는다.
+        resume_from_stage: str | None = None
         mapping_rules = None
+        feedback_examples: list[dict[str, str]] = []
         artifacts = _AttemptArtifacts()
 
         while retry_count <= max_retries:
@@ -85,89 +80,90 @@ class MigrationOrchestrator:
                     stage = "LOAD_RULES"
                     mapping_rules = get_all_mapping_rules()
 
-                stage = "LOAD_RAG_FEEDBACK"
-                feedback_examples = feedback_rag_service.retrieve_feedback_examples(
-                    job=job,
-                    last_error=last_error,
-                )
-                self._log_stage(job_key, stage, "completed", f"(rag_examples={len(feedback_examples)})")
+                if self._should_run_stage("LOAD_RAG_FEEDBACK", resume_from_stage):
+                    stage = "LOAD_RAG_FEEDBACK"
+                    feedback_examples = feedback_rag_service.retrieve_feedback_examples(
+                        job=job,
+                        last_error=last_error,
+                    )
+                    self._log_stage(job_key, stage, "completed", f"(rag_examples={len(feedback_examples)})")
+                    if resume_from_stage == "LOAD_RAG_FEEDBACK":
+                        resume_from_stage = None
 
-                stage = "GENERATE_TOBE_SQL"
-                artifacts.tobe_sql = generate_tobe_sql(
-                    job=job,
-                    mapping_rules=mapping_rules,
-                    last_error=last_error,
-                    feedback_examples=feedback_examples,
-                )
-                self._log_stage(
-                    job_key,
-                    stage,
-                    "completed",
-                    f"(sql_length={len(artifacts.tobe_sql)})",
-                )
+                if self._should_run_stage("GENERATE_TOBE_SQL", resume_from_stage):
+                    stage = "GENERATE_TOBE_SQL"
+                    artifacts.tobe_sql = generate_tobe_sql(
+                        job=job,
+                        mapping_rules=mapping_rules,
+                        last_error=last_error,
+                        feedback_examples=feedback_examples,
+                    )
+                    self._log_stage(job_key, stage, "completed", f"(sql_length={len(artifacts.tobe_sql)})")
+                    if resume_from_stage == "GENERATE_TOBE_SQL":
+                        resume_from_stage = None
 
                 tag_kind = (job.tag_kind or "").strip().upper()
                 if tag_kind != "SELECT":
                     self._complete_non_select_job(job=job, job_key=job_key, tobe_sql=artifacts.tobe_sql, tag_kind=tag_kind)
                     return
 
-                stage = "PREPARE_BIND_ARTIFACTS"
-                bind_param_names = self._prepare_bind_artifacts(
-                    job=job,
-                    job_key=job_key,
-                    tobe_sql=artifacts.tobe_sql,
-                    last_error=last_error,
-                    feedback_examples=feedback_examples,
-                    artifacts=artifacts,
-                )
+                bind_param_names = extract_bind_param_names(artifacts.tobe_sql) or extract_bind_param_names(job.source_sql)
+                if self._should_run_stage("PREPARE_BIND_ARTIFACTS", resume_from_stage):
+                    stage = "PREPARE_BIND_ARTIFACTS"
+                    bind_param_names = self._prepare_bind_artifacts(
+                        job=job,
+                        job_key=job_key,
+                        tobe_sql=artifacts.tobe_sql,
+                        last_error=last_error,
+                        feedback_examples=feedback_examples,
+                        artifacts=artifacts,
+                    )
+                    if resume_from_stage == "PREPARE_BIND_ARTIFACTS":
+                        resume_from_stage = None
 
-                stage = "GENERATE_TEST_SQL"
-                if not bind_param_names:
-                    artifacts.test_sql = generate_test_sql_no_bind(
-                        job=job,
-                        tobe_sql=artifacts.tobe_sql,
-                        last_error=last_error,
-                        feedback_examples=feedback_examples,
-                    )
-                else:
-                    artifacts.test_sql = generate_test_sql(
-                        job=job,
-                        tobe_sql=artifacts.tobe_sql,
-                        bind_set_json=artifacts.bind_set_json_for_test,
-                        last_error=last_error,
-                        feedback_examples=feedback_examples,
-                    )
-                self._log_stage(job_key, stage, "completed", f"(sql_length={len(artifacts.test_sql)})")
+                if self._should_run_stage("GENERATE_TEST_SQL", resume_from_stage):
+                    stage = "GENERATE_TEST_SQL"
+                    if not bind_param_names:
+                        artifacts.test_sql = generate_test_sql_no_bind(
+                            job=job,
+                            tobe_sql=artifacts.tobe_sql,
+                            last_error=last_error,
+                            feedback_examples=feedback_examples,
+                        )
+                    else:
+                        artifacts.test_sql = generate_test_sql(
+                            job=job,
+                            tobe_sql=artifacts.tobe_sql,
+                            bind_set_json=artifacts.bind_set_json_for_test,
+                            last_error=last_error,
+                            feedback_examples=feedback_examples,
+                        )
+                    self._log_stage(job_key, stage, "completed", f"(sql_length={len(artifacts.test_sql)})")
+                    if resume_from_stage == "GENERATE_TEST_SQL":
+                        resume_from_stage = None
 
                 stage = "EXECUTE_TEST_SQL"
                 test_rows = execute_test_query(artifacts.test_sql)
                 self._log_stage(job_key, stage, "completed", f"(rows={len(test_rows)})")
-                logger.info(
-                    f"[Orchestrator] ({job.space_nm}.{job.sql_id}) test rows: {json.dumps(test_rows, ensure_ascii=False)}"
-                )
+                logger.info(f"[Orchestrator] ({job.space_nm}.{job.sql_id}) test rows: {json.dumps(test_rows, ensure_ascii=False)}")
 
                 stage = "EVALUATE_STATUS"
                 status = evaluate_status_from_test_rows(test_rows)
                 self._log_stage(job_key, stage, "completed", f"(status={status})")
                 if status != "PASS":
                     retry_count += 1
-                    last_error = (
-                        "TEST_VALIDATION_FAIL: "
-                        + self._summarize_test_rows_for_retry(test_rows)
-                    )
+                    last_error = "TEST_VALIDATION_FAIL: " + self._summarize_test_rows_for_retry(test_rows)
                     logger.warning(
                         f"[Orchestrator] ({job.space_nm}.{job.sql_id}) stage={stage} "
                         f"status=FAIL (retry={retry_count}/{max_retries}): {last_error}"
                     )
                     if retry_count <= max_retries:
-                        time.sleep(1)
+                        resume_from_stage = None
+                        self._sleep_with_backoff(retry_count)
                         continue
                     break
 
-                final_log = (
-                    f"FINAL SUCCESS stage=COMPLETED status={status} "
-                    f"job={job.space_nm}.{job.sql_id}"
-                )
+                final_log = f"FINAL SUCCESS stage=COMPLETED status={status} job={job.space_nm}.{job.sql_id}"
 
                 stage = "UPDATE_DB"
                 update_cycle_result(
@@ -180,9 +176,7 @@ class MigrationOrchestrator:
                     final_log=final_log,
                 )
                 self._log_stage(job_key, stage, "completed")
-                logger.info(
-                    f"[Orchestrator] ({job.space_nm}.{job.sql_id}) TO_SQL_TEXT/BIND_SQL/BIND_SET/TEST_SQL/STATUS updated"
-                )
+                logger.info(f"[Orchestrator] ({job.space_nm}.{job.sql_id}) TO_SQL_TEXT/BIND_SQL/BIND_SET/TEST_SQL/STATUS updated")
                 return
 
             except LLMRateLimitError as exc:
@@ -192,7 +186,8 @@ class MigrationOrchestrator:
                     f"[Orchestrator] ({job.space_nm}.{job.sql_id}) stage={stage} LLM rate limit "
                     f"(retry={retry_count}): {last_error}"
                 )
-                time.sleep(1)
+                resume_from_stage = stage if self._is_overloaded_error(last_error) else None
+                self._sleep_with_backoff(retry_count)
 
             except Exception as exc:
                 retry_count += 1
@@ -205,7 +200,8 @@ class MigrationOrchestrator:
                     logger.error(
                         f"[Orchestrator] ({job.space_nm}.{job.sql_id}) bind cases at failure: {artifacts.bind_set_json_for_test}"
                     )
-                time.sleep(1)
+                resume_from_stage = stage if self._is_overloaded_error(last_error) else None
+                self._sleep_with_backoff(retry_count)
 
         failed_status = "FAIL"
         final_log = (
@@ -224,16 +220,36 @@ class MigrationOrchestrator:
         logger.error(f"[Orchestrator] ({job.space_nm}.{job.sql_id}) failed after retries: {last_error}")
 
     @staticmethod
+    def _is_overloaded_error(message: str) -> bool:
+        lower = (message or "").lower()
+        return ("overloaded_error" in lower) or ("error code: 529" in lower) or (" http 529" in lower)
+
+    @staticmethod
+    def _sleep_with_backoff(retry_count: int) -> None:
+        base = min(8, 2 ** max(0, retry_count - 1))
+        jitter = random.uniform(0.0, 0.7)
+        time.sleep(base + jitter)
+
+    @staticmethod
+    def _should_run_stage(stage_name: str, resume_from_stage: str | None) -> bool:
+        if not resume_from_stage:
+            return True
+        stage_order = ["LOAD_RAG_FEEDBACK", "GENERATE_TOBE_SQL", "PREPARE_BIND_ARTIFACTS", "GENERATE_TEST_SQL"]
+        if resume_from_stage not in stage_order or stage_name not in stage_order:
+            return True
+        return stage_order.index(stage_name) >= stage_order.index(resume_from_stage)
+
+    @staticmethod
     def _log_stage(job_key: str, stage_name: str, event: str, detail: str | None = None) -> None:
-        """단계 로그를 통일 포맷으로 출력한다."""
-        # LOAD_RULES 완료 로그는 캐시 재사용 시 과도하게 반복될 수 있어 제외한다.
+        """?④퀎 濡쒓렇瑜??듭씪 ?щ㎎?쇰줈 異쒕젰?쒕떎."""
+        # LOAD_RULES ?꾨즺 濡쒓렇??罹먯떆 ?ъ궗????怨쇰룄?섍쾶 諛섎났?????덉뼱 ?쒖쇅?쒕떎.
         if stage_name == "LOAD_RULES" and event == "completed":
             return
         suffix = f" {detail}" if detail else ""
         logger.info(f"[Orchestrator] ({job_key}) stage={stage_name} {event}{suffix}")
 
     def _complete_non_select_job(self, job, job_key: str, tobe_sql: str, tag_kind: str) -> None:
-        """SELECT가 아닌 태그는 실행검증 없이 TO-BE만 저장하고 종료한다."""
+        """SELECT媛 ?꾨땶 ?쒓렇???ㅽ뻾寃利??놁씠 TO-BE留???ν븯怨?醫낅즺?쒕떎."""
         stage = "SKIP_TEST_FOR_NON_SELECT"
         status = "PASS"
         final_log = (
@@ -263,10 +279,10 @@ class MigrationOrchestrator:
         feedback_examples: list[dict[str, str]],
         artifacts: _AttemptArtifacts,
     ) -> list[str]:
-        """bind 파라미터가 있는 경우에만 bind SQL/bind_set을 생성한다."""
+        """bind ?뚮씪誘명꽣媛 ?덈뒗 寃쎌슦?먮쭔 bind SQL/bind_set???앹꽦?쒕떎."""
         bind_param_names = extract_bind_param_names(tobe_sql)
         if not bind_param_names:
-            # TO-BE SQL에서 바인드가 사라진 경우를 대비해 원본 SQL도 한 번 더 본다.
+            # TO-BE SQL?먯꽌 諛붿씤?쒓? ?щ씪吏?寃쎌슦瑜??鍮꾪빐 ?먮낯 SQL????踰???蹂몃떎.
             bind_param_names = extract_bind_param_names(job.source_sql)
 
         if not bind_param_names:
@@ -307,7 +323,7 @@ class MigrationOrchestrator:
 
     @staticmethod
     def _get_case_insensitive_value(row: dict, key: str):
-        """테스트 결과 row에서 컬럼명을 대소문자 무시하고 조회한다."""
+        """?뚯뒪??寃곌낵 row?먯꽌 而щ읆紐낆쓣 ??뚮Ц??臾댁떆?섍퀬 議고쉶?쒕떎."""
         lowered = key.lower()
         for existing_key, value in row.items():
             if str(existing_key).lower() == lowered:
@@ -316,7 +332,7 @@ class MigrationOrchestrator:
 
     @classmethod
     def _summarize_test_rows_for_retry(cls, rows: list[dict]) -> str:
-        """재시도 프롬프트용으로 테스트 FAIL 요약 문자열을 만든다."""
+        """?ъ떆???꾨＼?꾪듃?⑹쑝濡??뚯뒪??FAIL ?붿빟 臾몄옄?댁쓣 留뚮뱺??"""
         if not rows:
             return "no_rows_returned"
 

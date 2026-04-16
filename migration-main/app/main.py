@@ -90,20 +90,27 @@ if __name__ == "__main__":
 
     signal_count = {"count": 0}
 
+    def _safe_signal_print(message: str) -> None:
+        """Signal handler에서는 logging 대신 저수준 stderr 출력만 사용한다."""
+        try:
+            os.write(2, (message + "\n").encode("utf-8", errors="ignore"))
+        except Exception:
+            pass
+
     def _handle_stop_signal(signum, _frame):
         # 첫 번째 시그널은 안전 종료, 두 번째 시그널은 강제 종료로 처리한다.
         signal_count["count"] += 1
         request_stop()
         if signal_count["count"] == 1:
-            logger.warning(f"Received signal {signum}. Stopping scheduler (wait=False).")
-            logger.warning("If shutdown hangs due to an external call, press Ctrl+C again to force exit.")
+            _safe_signal_print(f"Received signal {signum}. Stopping scheduler (wait=False).")
+            _safe_signal_print("If shutdown hangs due to an external call, press Ctrl+C again to force exit.")
             try:
                 scheduler.shutdown(wait=False)
             except Exception:
                 # Scheduler may not be running yet.
                 pass
             return
-        logger.error("Forced termination requested.")
+        _safe_signal_print("Forced termination requested.")
         os._exit(130)
 
     signal.signal(signal.SIGINT, _handle_stop_signal)

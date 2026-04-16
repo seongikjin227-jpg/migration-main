@@ -17,19 +17,35 @@
 - 결과 각 row = 1 bind set
 - 결과 컬럼 alias = parameter name 정확히 일치
 - 실제 운영 테이블을 조회해서 bind 후보를 생성
+- 목표 DB는 Oracle 19c
 
 필수 규칙:
 - SQL 1문장만 출력 (설명/주석/markdown/json 금지)
-- SELECT only (CTE 허용), 최대 3행
+- SELECT only (CTE 허용), 결과는 최대 3행
 - 실행 가능한 Oracle SQL만 생성하고 MyBatis 태그/placeholder(`<if`, `<where`, `#{{...}}`, `${{...}}`)를 출력에 남기지 말 것
 - 값은 실제 테이블 데이터에서 조회 (임의 literal 생성 금지)
 - `tobe_sql` 우선 분석, 부족하면 `from_sql` 참고
 - `SELECT DISTINCT '1' AS ...`, `SELECT DISTINCT 'N' AS ...` 같은 패턴 절대 금지
 - 최소 1개 이상 컬럼은 실제 테이블 컬럼/표현식(테이블 컬럼 기반)으로 산출
-- 불가피하면 낮은 우선순위 parameter는 NULL 허용
+- parameter 일부 값이 NULL인 bind set은 허용
+- `IS NOT NULL` 조건을 기계적으로 붙이지 말 것(필수 컬럼 필터 강제 금지)
 - 동일 bind set(모든 parameter alias 값이 동일한 행)은 중복 제거
 - 중복 제거를 위해 SELECT DISTINCT 또는 동등한 방식(ROW_NUMBER 필터링) 사용
 - 결과 1행은 반드시 1개의 유니크 bind set이어야 함
+- 데이터에 유니크 조합이 1~2개만 존재하면 1~2행만 반환해도 됨
+- 데이터에 유니크 조합이 3개 이상 존재하면 3행 반환
+- bind alias는 tobe_sql의 bind parameter 이름과 100% 동일해야 함
+- 컬럼 존재 여부가 불명확하면 추정하지 말고 from_sql/tobe_sql에 실제로 등장하는 컬럼 기준으로 안전하게 선택
+- `tobe_sql`에 존재하지 않는 컬럼명은 bind 후보 SQL에서 참조 금지
+- 특히 `DEPARTMENT_ID`, `MANAGER_ID`, `HIRE_DATE` 등은 tobe_sql에 실제 존재할 때만 사용
+
+권장 출력 형태:
+- `SELECT ... FROM ... WHERE ...` 또는 `WITH ... SELECT ...`
+- 마지막에 `WHERE ROWNUM <= 3` 또는 동등한 상한 로직으로 결과 수 제한
+
+구조 템플릿(권장):
+- `SELECT * FROM ( SELECT DISTINCT <expr1> AS <param1>, <expr2> AS <param2>, <expr3> AS <param3> FROM <to_table_or_join> [WHERE <optional_business_filter>] ORDER BY <stable_exprs> ) WHERE ROWNUM <= 3`
+- `<paramN>` alias는 bind parameter 이름과 정확히 동일해야 함
 
 출력 형식 계약(반드시 준수):
 - 최종 응답은 SQL 한 문장만

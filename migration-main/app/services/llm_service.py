@@ -3,12 +3,14 @@
 import json
 import os
 import re
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+# from langchain_openai import ChatOpenAI  # OpenAI fallback path (kept commented)
 
 from app.exceptions import LLMRateLimitError
 from app.models import MappingRuleItem, SqlInfoJob
@@ -18,6 +20,7 @@ from app.services.prompt_service import render_prompt
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(ROOT_DIR / ".env")
+_BIND_TOKEN_PATTERN = re.compile(r"[#$]\{\s*([^}]+?)\s*\}")
 
 
 def _env_or_value(value: str | None, env_name: str) -> str:
@@ -26,6 +29,16 @@ def _env_or_value(value: str | None, env_name: str) -> str:
     if not resolved:
         raise ValueError(f"Required environment variable '{env_name}' is not set.")
     return resolved
+
+
+def _normalize_anthropic_base_url(raw_base_url: str) -> str:
+    """Anthropic endpoint는 API root를 사용하도록 보정한다."""
+    normalized = raw_base_url.strip().rstrip("/")
+    if normalized.endswith("/v1/messages"):
+        return normalized[: -len("/v1/messages")]
+    if normalized.endswith("/v1"):
+        return normalized[: -len("/v1")]
+    return normalized
 
 
 def _serialize_mapping_rules(mapping_rules: list[MappingRuleItem]) -> str:
@@ -187,6 +200,7 @@ def build_tobe_sql_messages(
     )
     return [
         {"role": "system", "content": merged_prompt},
+        {"role": "user", "content": "Generate one executable Oracle SQL statement only."},
     ]
 
 
@@ -208,6 +222,7 @@ def build_bind_sql_messages(
     )
     return [
         {"role": "system", "content": merged_prompt},
+        {"role": "user", "content": "Generate one executable Oracle SQL statement only."},
     ]
 
 
@@ -229,6 +244,7 @@ def build_test_sql_messages(
     )
     return [
         {"role": "system", "content": merged_prompt},
+        {"role": "user", "content": "Generate one executable Oracle SQL statement only."},
     ]
 
 
@@ -248,6 +264,7 @@ def build_test_sql_no_bind_messages(
     )
     return [
         {"role": "system", "content": merged_prompt},
+        {"role": "user", "content": "Generate one executable Oracle SQL statement only."},
     ]
 
 
@@ -269,6 +286,64 @@ def _extract_sql_text(response_text: str) -> str:
     if not re.match(r"^(SELECT|INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|WITH)\b", text, re.IGNORECASE):
         raise ValueError("LLM response does not start with executable SQL.")
     return _normalize_oracle_sql(text)
+
+
+def _normalize_bind_name(token: str) -> str:
+    cleaned = (token or "").strip()
+    if not cleaned:
+        return ""
+    return cleaned.split(".")[-1].strip()
+
+
+def _sql_literal(value) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, datetime):
+        return f"TO_DATE('{value.strftime('%Y-%m-%d')}', 'YYYY-MM-DD')"
+    if isinstance(value, date):
+        return f"TO_DATE('{value.isoformat()}', 'YYYY-MM-DD')"
+
+    text = str(value)
+    # JSON 직렬화된 datetime/date 문자열 우선 처리
+    iso_match = re.match(r"^(\d{4}-\d{2}-\d{2})(?:[T\s].*)?$", text)
+    if iso_match:
+        return f"TO_DATE('{iso_match.group(1)}', 'YYYY-MM-DD')"
+    escaped = text.replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _render_sql_with_bind_values(sql_text: str, bind_case: dict[str, object]) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        param_name = _normalize_bind_name(match.group(1))
+        return _sql_literal(bind_case.get(param_name))
+
+    return _BIND_TOKEN_PATTERN.sub(_replace, sql_text or "")
+
+
+def _build_deterministic_test_sql(
+    from_sql: str,
+    tobe_sql: str,
+    bind_sets: list[dict[str, object]],
+) -> str:
+    if not bind_sets:
+        bind_sets = [{}]
+
+    selects: list[str] = []
+    for idx, bind_case in enumerate(bind_sets, start=1):
+        rendered_from = _render_sql_with_bind_values(from_sql, bind_case).strip()
+        rendered_to = _render_sql_with_bind_values(tobe_sql, bind_case).strip()
+        selects.append(
+            "SELECT "
+            f"{idx} AS CASE_NO, "
+            f"(SELECT COUNT(*) FROM ({rendered_from}) f) AS FROM_COUNT, "
+            f"(SELECT COUNT(*) FROM ({rendered_to}) t) AS TO_COUNT "
+            "FROM DUAL"
+        )
+    return " UNION ALL ".join(selects)
 
 
 def _strip_sqlplus_terminator_lines(lines: Iterable[str]) -> list[str]:
@@ -345,19 +420,36 @@ def _to_langchain_messages(messages: list[dict[str, str]]):
     return converted
 
 
+def _ensure_anthropic_message_requirements(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Anthropic 요구사항에 맞게 최소 1개의 user 메시지를 보장한다."""
+    safe = list(messages or [])
+    has_user_or_assistant = any((m.get("role") or "").lower() in {"user", "assistant"} for m in safe)
+    if not has_user_or_assistant:
+        safe.append({"role": "user", "content": "Generate one executable Oracle SQL statement only."})
+    return safe
+
+
 def call_llm_api(api_key: str | None, model: str | None, base_url: str | None, messages: list[dict[str, str]]) -> str:
     """LLM을 호출하고 일시적 장애를 재시도 가능 예외로 변환한다."""
     resolved_api_key = _env_or_value(api_key, "LLM_API_KEY")
     resolved_model = _env_or_value(model, "LLM_MODEL")
-    resolved_base_url = _env_or_value(base_url, "LLM_BASE_URL")
+    resolved_base_url = _normalize_anthropic_base_url(_env_or_value(base_url, "LLM_BASE_URL"))
     try:
-        llm = ChatOpenAI(
-            api_key=resolved_api_key,
+        # OpenAI fallback path (intentionally kept as comment):
+        # llm = ChatOpenAI(
+        #     api_key=resolved_api_key,
+        #     model=resolved_model,
+        #     base_url=resolved_base_url,
+        #     temperature=0,
+        # )
+        llm = ChatAnthropic(
+            anthropic_api_key=resolved_api_key,
             model=resolved_model,
-            base_url=resolved_base_url,
+            anthropic_api_url=resolved_base_url,
             temperature=0,
         )
-        response = llm.invoke(_to_langchain_messages(messages))
+        safe_messages = _ensure_anthropic_message_requirements(messages)
+        response = llm.invoke(_to_langchain_messages(safe_messages))
         content = getattr(response, "content", response)
         if isinstance(content, list):
             text = "".join(item.get("text", "") if isinstance(item, dict) else str(item) for item in content)
@@ -426,18 +518,13 @@ def generate_test_sql(
     feedback_examples: list[dict[str, str]] | None = None,
 ) -> str:
     """bind-aware 시나리오용 테스트 SQL 생성 진입점."""
-    return call_llm_api(
-        api_key=None,
-        model=None,
-        base_url=None,
-        messages=build_test_sql_messages(
-            job=job,
-            tobe_sql=tobe_sql,
-            bind_set_json=bind_set_json,
-            last_error=last_error,
-            feedback_examples=feedback_examples,
-        ),
-    )
+    try:
+        bind_sets = json.loads(bind_set_json or "[]")
+    except Exception:
+        bind_sets = []
+    if not isinstance(bind_sets, list):
+        bind_sets = []
+    return _build_deterministic_test_sql(job.source_sql, tobe_sql, bind_sets)
 
 
 def generate_test_sql_no_bind(
@@ -447,14 +534,4 @@ def generate_test_sql_no_bind(
     feedback_examples: list[dict[str, str]] | None = None,
 ) -> str:
     """no-bind 시나리오용 테스트 SQL 생성 진입점."""
-    return call_llm_api(
-        api_key=None,
-        model=None,
-        base_url=None,
-        messages=build_test_sql_no_bind_messages(
-            job=job,
-            tobe_sql=tobe_sql,
-            last_error=last_error,
-            feedback_examples=feedback_examples,
-        ),
-    )
+    return _build_deterministic_test_sql(job.source_sql, tobe_sql, [{}])
