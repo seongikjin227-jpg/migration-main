@@ -48,7 +48,7 @@ class FeedbackRagService:
     def __init__(self) -> None:
         self.db_path = os.getenv("RAG_VECTOR_DB_PATH", str(ROOT_DIR / "migration.db"))
         self.table_name = os.getenv("RAG_VECTOR_TABLE", "feedback_rag_index")
-        self.top_k = int(os.getenv("RAG_TOP_K", "5"))
+        self.top_k = int(os.getenv("RAG_TOP_K", "3"))
         self.corpus_limit = int(os.getenv("RAG_CORPUS_LIMIT", "2000"))
         self.embed_timeout_sec = int(os.getenv("RAG_EMBED_TIMEOUT_SEC", "30"))
         self._ensure_schema()
@@ -124,19 +124,13 @@ class FeedbackRagService:
     def retrieve_feedback_examples(
         self,
         job: SqlInfoJob,
-        correct_kind: str,
         last_error: str | None = None,
     ) -> list[dict[str, str]]:
-        normalized_kind = self._normalize_correct_kind(correct_kind)
-        candidates = self._load_candidates(
-            space_nm=job.space_nm,
-            sql_id=job.sql_id,
-            correct_kind=normalized_kind,
-        )
+        candidates = self._load_candidates()
         if not candidates:
             return []
 
-        query_text = self._build_query_text(job=job, correct_kind=normalized_kind, last_error=last_error)
+        query_text = self._build_query_text(job=job, last_error=last_error)
         query_embedding = self._embed_texts([query_text])[0]
         query_tags = self._extract_pattern_tags(job.source_sql, last_error or "")
         ranked = self._rank_candidates(
@@ -218,36 +212,10 @@ class FeedbackRagService:
         correct_sql: str,
         pattern_tags: list[str],
     ) -> str:
-        return "\n".join(
-            [
-                f"[CORRECT_KIND] {correct_kind}",
-                f"[NAMESPACE] {space_nm}",
-                f"[SQL_ID] {sql_id}",
-                f"[PATTERN_TAGS] {','.join(pattern_tags)}",
-                "[SOURCE_SQL]",
-                source_sql.strip(),
-                "[GENERATED_SQL]",
-                generated_sql.strip(),
-                "[CORRECT_SQL]",
-                correct_sql.strip(),
-            ]
-        )
+        return (source_sql or "").strip()
 
-    def _build_query_text(self, job: SqlInfoJob, correct_kind: str, last_error: str | None) -> str:
-        error_text = (last_error or "").strip()
-        query_tags = self._extract_pattern_tags(job.source_sql, error_text)
-        return "\n".join(
-            [
-                f"[CORRECT_KIND] {correct_kind}",
-                f"[NAMESPACE] {job.space_nm}",
-                f"[SQL_ID] {job.sql_id}",
-                f"[PATTERN_TAGS] {','.join(query_tags)}",
-                "[SOURCE_SQL]",
-                (job.source_sql or "").strip(),
-                "[LAST_ERROR]",
-                error_text or "NONE",
-            ]
-        )
+    def _build_query_text(self, job: SqlInfoJob, last_error: str | None) -> str:
+        return (job.source_sql or "").strip()
 
     def _upsert_vector(self, item: _VectorItem, text_hash: str) -> None:
         with sqlite3.connect(self.db_path) as conn:
@@ -302,31 +270,16 @@ class FeedbackRagService:
             conn.commit()
             return len(to_delete)
 
-    def _load_candidates(self, space_nm: str, sql_id: str, correct_kind: str) -> list[_VectorItem]:
+    def _load_candidates(self) -> list[_VectorItem]:
         with sqlite3.connect(self.db_path) as conn:
-            scoped_rows = conn.execute(
+            rows = conn.execute(
                 f"""
                 SELECT doc_id, correct_kind, space_nm, sql_id, source_sql, generated_sql,
                        correct_sql, edited_yn, upd_ts, pattern_tags_json, embedding_json
                 FROM {self.table_name}
-                WHERE UPPER(correct_kind)=UPPER(?)
-                  AND UPPER(space_nm)=UPPER(?)
-                  AND UPPER(sql_id)=UPPER(?)
+                ORDER BY upd_ts DESC
                 """,
-                (correct_kind, space_nm, sql_id),
             ).fetchall()
-
-            rows = scoped_rows
-            if not rows:
-                rows = conn.execute(
-                    f"""
-                    SELECT doc_id, correct_kind, space_nm, sql_id, source_sql, generated_sql,
-                           correct_sql, edited_yn, upd_ts, pattern_tags_json, embedding_json
-                    FROM {self.table_name}
-                    WHERE UPPER(correct_kind)=UPPER(?)
-                    """,
-                    (correct_kind,),
-                ).fetchall()
 
         result: list[_VectorItem] = []
         for row in rows:
@@ -477,12 +430,6 @@ class FeedbackRagService:
         if not value:
             raise ValueError(f"Required environment variable '{name}' is not set.")
         return value
-
-    def _normalize_correct_kind(self, correct_kind: str) -> str:
-        normalized = (correct_kind or "").strip().upper()
-        if normalized not in _VALID_CORRECT_KINDS:
-            raise ValueError(f"Unsupported correct SQL kind: {correct_kind}")
-        return normalized
 
 
 feedback_rag_service = FeedbackRagService()

@@ -63,16 +63,15 @@ class MigrationOrchestrator:
 
                 if self._should_run_stage("LOAD_RAG_FEEDBACK", resume_from_stage):
                     stage = "LOAD_RAG_FEEDBACK"
-                    tobe_feedback_examples = feedback_rag_service.retrieve_feedback_examples(
+                    feedback_examples = feedback_rag_service.retrieve_feedback_examples(
                         job=job,
-                        correct_kind="TOBE",
                         last_error=last_error,
                     )
-                    self._log_stage(job_key, stage, "completed", f"(rag_examples={len(tobe_feedback_examples)})")
+                    self._log_stage(job_key, stage, "completed", f"(rag_examples={len(feedback_examples)})")
                     if resume_from_stage == "LOAD_RAG_FEEDBACK":
                         resume_from_stage = None
                 else:
-                    tobe_feedback_examples = []
+                    feedback_examples = []
 
                 if self._should_run_stage("GENERATE_TOBE_SQL", resume_from_stage):
                     stage = "GENERATE_TOBE_SQL"
@@ -80,7 +79,7 @@ class MigrationOrchestrator:
                         job=job,
                         mapping_rules=mapping_rules,
                         last_error=last_error,
-                        feedback_examples=tobe_feedback_examples,
+                        feedback_examples=feedback_examples,
                     )
                     self._log_stage(job_key, stage, "completed", f"(sql_length={len(artifacts.tobe_sql)})")
                     if resume_from_stage == "GENERATE_TOBE_SQL":
@@ -94,17 +93,12 @@ class MigrationOrchestrator:
                 bind_param_names = extract_bind_param_names(artifacts.tobe_sql) or extract_bind_param_names(job.source_sql)
                 if self._should_run_stage("PREPARE_BIND_ARTIFACTS", resume_from_stage):
                     stage = "PREPARE_BIND_ARTIFACTS"
-                    bind_feedback_examples = feedback_rag_service.retrieve_feedback_examples(
-                        job=job,
-                        correct_kind="BIND",
-                        last_error=last_error,
-                    )
                     bind_param_names = self._prepare_bind_artifacts(
                         job=job,
                         job_key=job_key,
                         tobe_sql=artifacts.tobe_sql,
                         last_error=last_error,
-                        feedback_examples=bind_feedback_examples,
+                        feedback_examples=feedback_examples,
                         artifacts=artifacts,
                     )
                     if resume_from_stage == "PREPARE_BIND_ARTIFACTS":
@@ -112,17 +106,12 @@ class MigrationOrchestrator:
 
                 if self._should_run_stage("GENERATE_TEST_SQL", resume_from_stage):
                     stage = "GENERATE_TEST_SQL"
-                    test_feedback_examples = feedback_rag_service.retrieve_feedback_examples(
-                        job=job,
-                        correct_kind="TEST",
-                        last_error=last_error,
-                    )
                     if not bind_param_names:
                         artifacts.test_sql = generate_test_sql_no_bind(
                             job=job,
                             tobe_sql=artifacts.tobe_sql,
                             last_error=last_error,
-                            feedback_examples=test_feedback_examples,
+                            feedback_examples=feedback_examples,
                         )
                     else:
                         artifacts.test_sql = generate_test_sql(
@@ -130,7 +119,7 @@ class MigrationOrchestrator:
                             tobe_sql=artifacts.tobe_sql,
                             bind_set_json=artifacts.bind_set_json_for_test,
                             last_error=last_error,
-                            feedback_examples=test_feedback_examples,
+                            feedback_examples=feedback_examples,
                         )
                     self._log_stage(job_key, stage, "completed", f"(sql_length={len(artifacts.test_sql)})")
                     if resume_from_stage == "GENERATE_TEST_SQL":

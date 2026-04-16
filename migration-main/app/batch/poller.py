@@ -10,6 +10,7 @@ from app.orchestrator import MigrationOrchestrator
 from app.common import logger
 from app.repositories.result_repository import get_pending_jobs, increment_batch_count
 from app.common import is_stop_requested
+from app.services.feedback_rag_service import feedback_rag_service
 
 
 orchestrator = MigrationOrchestrator()
@@ -33,6 +34,19 @@ def poll_database():
             return
 
         logger.info(f"[Scheduler] Found {len(jobs)} pending job(s).")
+        try:
+            result = feedback_rag_service.sync_index(limit=None)
+            logger.info(
+                "[Scheduler] RAG sync completed "
+                f"(source_rows={result['source_rows']}, "
+                f"upserted={result['upserted']}, "
+                f"skipped_unchanged={result['skipped_unchanged']}, "
+                f"skipped_no_correct_sql={result['skipped_no_correct_sql']}, "
+                f"deleted={result['deleted']})"
+            )
+        except Exception as exc:
+            logger.warning(f"[Scheduler] RAG sync skipped due to error: {exc}")
+
         for job in jobs:
             if is_stop_requested():
                 logger.info("[Scheduler] Stop requested. Aborting remaining jobs in this cycle.")
