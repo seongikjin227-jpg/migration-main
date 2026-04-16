@@ -30,10 +30,20 @@ def _join_url(base_url: str, suffix: str) -> str:
 
 def _normalize_anthropic_base_url(raw_base_url: str) -> str:
     normalized = raw_base_url.strip().rstrip("/")
+    if normalized.endswith("/v1/message"):
+        return normalized[: -len("/v1/message")]
     if normalized.endswith("/v1/messages"):
         return normalized[: -len("/v1/messages")]
     if normalized.endswith("/v1"):
         return normalized[: -len("/v1")]
+    return normalized
+
+
+def _normalize_openai_base_url(raw_base_url: str) -> str:
+    normalized = raw_base_url.strip().rstrip("/")
+    for suffix in ("/chat/completions", "/responses", "/completions", "/models"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
     return normalized
 
 
@@ -94,6 +104,7 @@ def check_oracle_connection() -> HealthResult:
 
 
 def check_llm_connection(timeout_sec: int = 15) -> HealthResult:
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
     base_url = os.getenv("LLM_BASE_URL", "").strip()
     api_key = os.getenv("LLM_API_KEY", "").strip()
     model = os.getenv("LLM_MODEL", "").strip()
@@ -102,7 +113,12 @@ def check_llm_connection(timeout_sec: int = 15) -> HealthResult:
     if not api_key:
         return HealthResult(name="LLM", ok=False, detail="LLM_API_KEY is not set")
 
-    is_anthropic = ("anthropic.com" in base_url.lower()) or model.lower().startswith("claude")
+    if provider and provider not in {"anthropic", "openai"}:
+        return HealthResult(name="LLM", ok=False, detail="LLM_PROVIDER must be either 'anthropic' or 'openai'")
+
+    is_anthropic = provider == "anthropic"
+    if not provider:
+        is_anthropic = ("anthropic.com" in base_url.lower()) or model.lower().startswith("claude")
     if is_anthropic:
         normalized_base = _normalize_anthropic_base_url(base_url)
         endpoint = _join_url(normalized_base, "/v1/models")
@@ -111,7 +127,7 @@ def check_llm_connection(timeout_sec: int = 15) -> HealthResult:
             "anthropic-version": "2023-06-01",
         }
     else:
-        endpoint = _join_url(base_url, "models")
+        endpoint = _join_url(_normalize_openai_base_url(base_url), "models")
         headers = {"Authorization": f"Bearer {api_key}"}
 
     try:

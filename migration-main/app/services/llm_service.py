@@ -10,7 +10,7 @@ from typing import Iterable
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_anthropic import ChatAnthropic
-# from langchain_openai import ChatOpenAI  # OpenAI fallback path (kept commented)
+from langchain_openai import ChatOpenAI
 
 from app.common import LLMRateLimitError
 from app.common import MappingRuleItem, SqlInfoJob
@@ -32,13 +32,38 @@ def _env_or_value(value: str | None, env_name: str) -> str:
 
 
 def _normalize_anthropic_base_url(raw_base_url: str) -> str:
-    """Anthropic endpoint는 API root를 사용하도록 보정한다."""
+    """Anthropic endpoint??API root????????????????."""
     normalized = raw_base_url.strip().rstrip("/")
+    if normalized.endswith("/v1/message"):
+        return normalized[: -len("/v1/message")]
     if normalized.endswith("/v1/messages"):
         return normalized[: -len("/v1/messages")]
     if normalized.endswith("/v1"):
         return normalized[: -len("/v1")]
     return normalized
+
+
+def _normalize_openai_base_url(raw_base_url: str) -> str:
+    """OpenAI ?? gateway? root ?? /v1 ??? ???? ????."""
+    normalized = raw_base_url.strip().rstrip("/")
+    for suffix in ("/chat/completions", "/responses", "/completions", "/models"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
+    return normalized
+
+
+def _resolve_llm_provider(provider: str | None, base_url: str, model: str) -> str:
+    resolved = (provider or os.getenv("LLM_PROVIDER") or "").strip().lower()
+    if resolved:
+        if resolved not in {"anthropic", "openai"}:
+            raise ValueError("LLM_PROVIDER must be either 'anthropic' or 'openai'.")
+        return resolved
+
+    lowered_base = base_url.lower()
+    lowered_model = model.lower()
+    if "anthropic" in lowered_base or lowered_model.startswith("claude"):
+        return "anthropic"
+    return "openai"
 
 
 def _serialize_mapping_rules(mapping_rules: list[MappingRuleItem]) -> str:
@@ -429,26 +454,40 @@ def _ensure_anthropic_message_requirements(messages: list[dict[str, str]]) -> li
     return safe
 
 
-def call_llm_api(api_key: str | None, model: str | None, base_url: str | None, messages: list[dict[str, str]]) -> str:
-    """LLM을 호출하고 일시적 장애를 재시도 가능 예외로 변환한다."""
+def call_llm_api(
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+    messages: list[dict[str, str]],
+    provider: str | None = None,
+) -> str:
+    """LLM???????? ???????????????????????????????"""
     resolved_api_key = _env_or_value(api_key, "LLM_API_KEY")
     resolved_model = _env_or_value(model, "LLM_MODEL")
-    resolved_base_url = _normalize_anthropic_base_url(_env_or_value(base_url, "LLM_BASE_URL"))
+    raw_base_url = _env_or_value(base_url, "LLM_BASE_URL")
+    resolved_provider = _resolve_llm_provider(
+        provider=provider,
+        base_url=raw_base_url,
+        model=resolved_model,
+    )
     try:
-        # OpenAI fallback path (intentionally kept as comment):
-        # llm = ChatOpenAI(
-        #     api_key=resolved_api_key,
-        #     model=resolved_model,
-        #     base_url=resolved_base_url,
-        #     temperature=0,
-        # )
-        llm = ChatAnthropic(
-            anthropic_api_key=resolved_api_key,
-            model=resolved_model,
-            anthropic_api_url=resolved_base_url,
-            temperature=0,
-        )
-        safe_messages = _ensure_anthropic_message_requirements(messages)
+        if resolved_provider == "anthropic":
+            llm = ChatAnthropic(
+                anthropic_api_key=resolved_api_key,
+                model=resolved_model,
+                anthropic_api_url=_normalize_anthropic_base_url(raw_base_url),
+                temperature=0,
+            )
+            safe_messages = _ensure_anthropic_message_requirements(messages)
+        else:
+            llm = ChatOpenAI(
+                api_key=resolved_api_key,
+                model=resolved_model,
+                base_url=_normalize_openai_base_url(raw_base_url),
+                temperature=0,
+            )
+            safe_messages = list(messages or [])
+
         response = llm.invoke(_to_langchain_messages(safe_messages))
         content = getattr(response, "content", response)
         if isinstance(content, list):
