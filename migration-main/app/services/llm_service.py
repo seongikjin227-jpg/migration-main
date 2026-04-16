@@ -12,8 +12,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_anthropic import ChatAnthropic
 # from langchain_openai import ChatOpenAI  # OpenAI fallback path (kept commented)
 
-from app.exceptions import LLMRateLimitError
-from app.models import MappingRuleItem, SqlInfoJob
+from app.common import LLMRateLimitError
+from app.common import MappingRuleItem, SqlInfoJob
 from app.services.binding_service import build_bind_target_hints
 from app.services.prompt_service import render_prompt
 

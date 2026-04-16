@@ -1,8 +1,8 @@
-"""CORRECT_SQL 기반 피드백 RAG 서비스.
+"""Stage-aware correct SQL 기반 feedback RAG 서비스.
 
 운영 원칙:
-1) 벡터 인덱스 저장(동기화)은 수동 명령에서만 수행
-2) 배치 실행 중에는 저장 없이 조회만 수행
+1) 벡터 인덱스 동기화는 시작 시점/수동 실행에서만 수행한다.
+2) 배치 실행 중에는 조회만 수행한다.
 """
 
 from __future__ import annotations
@@ -20,19 +20,19 @@ from typing import Any
 import requests
 from dotenv import load_dotenv
 
-from app.models import SqlInfoJob
+from app.common import SqlInfoJob
 from app.repositories.result_repository import get_feedback_corpus_rows
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(ROOT_DIR / ".env")
+_VALID_CORRECT_KINDS = ("TOBE", "BIND", "TEST")
 
 
 @dataclass
 class _VectorItem:
-    """벡터 인덱스 1건."""
-
     doc_id: str
+    correct_kind: str
     space_nm: str
     sql_id: str
     source_sql: str
@@ -45,8 +45,6 @@ class _VectorItem:
 
 
 class FeedbackRagService:
-    """정답 SQL 코퍼스를 벡터화하고 조회하는 서비스."""
-
     def __init__(self) -> None:
         self.db_path = os.getenv("RAG_VECTOR_DB_PATH", str(ROOT_DIR / "migration.db"))
         self.table_name = os.getenv("RAG_VECTOR_TABLE", "feedback_rag_index")
@@ -56,17 +54,11 @@ class FeedbackRagService:
         self._ensure_schema()
 
     def sync_index(self, limit: int | None = None) -> dict[str, int]:
-        """Oracle 코퍼스를 SQLite 벡터 인덱스로 동기화한다.
-
-        반환:
-        - source_rows: 원본 코퍼스 조회 건수
-        - upserted: 신규/변경으로 벡터 저장된 건수
-        - skipped_unchanged: 변경 없음으로 건너뛴 건수
-        - skipped_no_correct_sql: CORRECT_SQL 부재로 제외된 건수
-        - deleted: 원본에서 사라져 인덱스에서 삭제된 건수
-        """
         target_limit = limit if (limit and limit > 0) else self.corpus_limit
-        source_rows = get_feedback_corpus_rows(limit=target_limit)
+        source_rows: list[dict[str, str]] = []
+        for correct_kind in _VALID_CORRECT_KINDS:
+            source_rows.extend(get_feedback_corpus_rows(correct_kind=correct_kind, limit=target_limit))
+
         source_doc_ids: set[str] = set()
         existing_hash = self._load_existing_doc_hash()
 
@@ -78,6 +70,7 @@ class FeedbackRagService:
             source_sql = (row.get("edit_fr_sql") or "").strip() or (row.get("fr_sql_text") or "")
             generated_sql = row.get("to_sql_text") or ""
             correct_sql = row.get("correct_sql") or ""
+            correct_kind = (row.get("correct_kind") or "").strip().upper()
             if not correct_sql.strip():
                 skipped_no_correct_sql += 1
                 continue
@@ -86,6 +79,7 @@ class FeedbackRagService:
             source_doc_ids.add(doc_id)
             pattern_tags = self._extract_pattern_tags(source_sql, generated_sql, correct_sql)
             doc_text = self._build_doc_text(
+                correct_kind=correct_kind,
                 space_nm=row.get("space_nm", ""),
                 sql_id=row.get("sql_id", ""),
                 source_sql=source_sql,
@@ -103,6 +97,7 @@ class FeedbackRagService:
             self._upsert_vector(
                 item=_VectorItem(
                     doc_id=doc_id,
+                    correct_kind=correct_kind,
                     space_nm=row.get("space_nm", ""),
                     sql_id=row.get("sql_id", ""),
                     source_sql=source_sql,
@@ -126,16 +121,22 @@ class FeedbackRagService:
             "deleted": deleted,
         }
 
-    def retrieve_feedback_examples(self, job: SqlInfoJob, last_error: str | None = None) -> list[dict[str, str]]:
-        """현재 작업과 유사한 정답 SQL 예시를 조회한다.
-
-        주의: 이 함수는 저장/동기화를 수행하지 않는다.
-        """
-        candidates = self._load_candidates(space_nm=job.space_nm, sql_id=job.sql_id)
+    def retrieve_feedback_examples(
+        self,
+        job: SqlInfoJob,
+        correct_kind: str,
+        last_error: str | None = None,
+    ) -> list[dict[str, str]]:
+        normalized_kind = self._normalize_correct_kind(correct_kind)
+        candidates = self._load_candidates(
+            space_nm=job.space_nm,
+            sql_id=job.sql_id,
+            correct_kind=normalized_kind,
+        )
         if not candidates:
             return []
 
-        query_text = self._build_query_text(job=job, last_error=last_error)
+        query_text = self._build_query_text(job=job, correct_kind=normalized_kind, last_error=last_error)
         query_embedding = self._embed_texts([query_text])[0]
         query_tags = self._extract_pattern_tags(job.source_sql, last_error or "")
         ranked = self._rank_candidates(
@@ -148,6 +149,7 @@ class FeedbackRagService:
         for item, score in ranked[: self.top_k]:
             examples.append(
                 {
+                    "correct_kind": item.correct_kind,
                     "edited_yn": item.edited_yn,
                     "correct_sql": item.correct_sql,
                     "generated_sql": item.generated_sql,
@@ -159,12 +161,12 @@ class FeedbackRagService:
         return examples
 
     def _ensure_schema(self) -> None:
-        """SQLite 벡터 테이블 생성."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.table_name} (
                     doc_id TEXT PRIMARY KEY,
+                    correct_kind TEXT NOT NULL,
                     space_nm TEXT NOT NULL,
                     sql_id TEXT NOT NULL,
                     source_sql TEXT NOT NULL,
@@ -178,26 +180,37 @@ class FeedbackRagService:
                 )
                 """
             )
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_ns_id ON {self.table_name}(space_nm, sql_id)"
-            )
-            columns = {str(row[1]).lower() for row in conn.execute(f"PRAGMA table_info({self.table_name})").fetchall()}
+            columns = {
+                str(row[1]).lower() for row in conn.execute(f"PRAGMA table_info({self.table_name})").fetchall()
+            }
+            if "correct_kind" not in columns:
+                conn.execute(
+                    f"ALTER TABLE {self.table_name} ADD COLUMN correct_kind TEXT NOT NULL DEFAULT 'TOBE'"
+                )
             if "pattern_tags_json" not in columns:
-                conn.execute(f"ALTER TABLE {self.table_name} ADD COLUMN pattern_tags_json TEXT NOT NULL DEFAULT '[]'")
+                conn.execute(
+                    f"ALTER TABLE {self.table_name} ADD COLUMN pattern_tags_json TEXT NOT NULL DEFAULT '[]'"
+                )
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_kind_ns_id "
+                f"ON {self.table_name}(correct_kind, space_nm, sql_id)"
+            )
             conn.commit()
 
     def _load_existing_doc_hash(self) -> dict[str, str]:
-        """현재 인덱스의 doc_id -> text_hash 조회."""
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute(f"SELECT doc_id, text_hash FROM {self.table_name}").fetchall()
         return {str(row[0]): str(row[1]) for row in rows}
 
     def _build_doc_id(self, row: dict[str, str]) -> str:
-        """ROWID 기반 문서 ID."""
-        return f"{row.get('space_nm','')}.{row.get('sql_id','')}::{row.get('row_id','')}"
+        return (
+            f"{row.get('correct_kind', 'TOBE')}::"
+            f"{row.get('space_nm', '')}.{row.get('sql_id', '')}::{row.get('row_id', '')}"
+        )
 
     def _build_doc_text(
         self,
+        correct_kind: str,
         space_nm: str,
         sql_id: str,
         source_sql: str,
@@ -205,9 +218,9 @@ class FeedbackRagService:
         correct_sql: str,
         pattern_tags: list[str],
     ) -> str:
-        """임베딩 입력 텍스트 구성."""
         return "\n".join(
             [
+                f"[CORRECT_KIND] {correct_kind}",
                 f"[NAMESPACE] {space_nm}",
                 f"[SQL_ID] {sql_id}",
                 f"[PATTERN_TAGS] {','.join(pattern_tags)}",
@@ -220,12 +233,12 @@ class FeedbackRagService:
             ]
         )
 
-    def _build_query_text(self, job: SqlInfoJob, last_error: str | None) -> str:
-        """조회 질의 임베딩용 텍스트 구성."""
+    def _build_query_text(self, job: SqlInfoJob, correct_kind: str, last_error: str | None) -> str:
         error_text = (last_error or "").strip()
         query_tags = self._extract_pattern_tags(job.source_sql, error_text)
         return "\n".join(
             [
+                f"[CORRECT_KIND] {correct_kind}",
                 f"[NAMESPACE] {job.space_nm}",
                 f"[SQL_ID] {job.sql_id}",
                 f"[PATTERN_TAGS] {','.join(query_tags)}",
@@ -237,15 +250,15 @@ class FeedbackRagService:
         )
 
     def _upsert_vector(self, item: _VectorItem, text_hash: str) -> None:
-        """벡터 인덱스 upsert."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.table_name} (
-                    doc_id, space_nm, sql_id, source_sql, generated_sql,
+                    doc_id, correct_kind, space_nm, sql_id, source_sql, generated_sql,
                     correct_sql, edited_yn, upd_ts, pattern_tags_json, text_hash, embedding_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(doc_id) DO UPDATE SET
+                    correct_kind=excluded.correct_kind,
                     space_nm=excluded.space_nm,
                     sql_id=excluded.sql_id,
                     source_sql=excluded.source_sql,
@@ -259,6 +272,7 @@ class FeedbackRagService:
                 """,
                 (
                     item.doc_id,
+                    item.correct_kind,
                     item.space_nm,
                     item.sql_id,
                     item.source_sql,
@@ -274,7 +288,6 @@ class FeedbackRagService:
             conn.commit()
 
     def _delete_removed_docs(self, source_doc_ids: set[str]) -> int:
-        """원본 코퍼스에서 사라진 문서를 인덱스에서도 삭제."""
         if not source_doc_ids:
             return 0
         with sqlite3.connect(self.db_path) as conn:
@@ -289,31 +302,30 @@ class FeedbackRagService:
             conn.commit()
             return len(to_delete)
 
-    def _load_candidates(self, space_nm: str, sql_id: str) -> list[_VectorItem]:
-        """후보 벡터 로딩.
-
-        - 1순위: 동일 namespace/sql_id
-        - 2순위: 전체 인덱스
-        """
+    def _load_candidates(self, space_nm: str, sql_id: str, correct_kind: str) -> list[_VectorItem]:
         with sqlite3.connect(self.db_path) as conn:
             scoped_rows = conn.execute(
                 f"""
-                SELECT doc_id, space_nm, sql_id, source_sql, generated_sql,
+                SELECT doc_id, correct_kind, space_nm, sql_id, source_sql, generated_sql,
                        correct_sql, edited_yn, upd_ts, pattern_tags_json, embedding_json
                 FROM {self.table_name}
-                WHERE UPPER(space_nm)=UPPER(?) AND UPPER(sql_id)=UPPER(?)
+                WHERE UPPER(correct_kind)=UPPER(?)
+                  AND UPPER(space_nm)=UPPER(?)
+                  AND UPPER(sql_id)=UPPER(?)
                 """,
-                (space_nm, sql_id),
+                (correct_kind, space_nm, sql_id),
             ).fetchall()
 
             rows = scoped_rows
             if not rows:
                 rows = conn.execute(
                     f"""
-                    SELECT doc_id, space_nm, sql_id, source_sql, generated_sql,
+                    SELECT doc_id, correct_kind, space_nm, sql_id, source_sql, generated_sql,
                            correct_sql, edited_yn, upd_ts, pattern_tags_json, embedding_json
                     FROM {self.table_name}
-                    """
+                    WHERE UPPER(correct_kind)=UPPER(?)
+                    """,
+                    (correct_kind,),
                 ).fetchall()
 
         result: list[_VectorItem] = []
@@ -321,15 +333,16 @@ class FeedbackRagService:
             result.append(
                 _VectorItem(
                     doc_id=str(row[0]),
-                    space_nm=str(row[1]),
-                    sql_id=str(row[2]),
-                    source_sql=str(row[3]),
-                    generated_sql=str(row[4]),
-                    correct_sql=str(row[5]),
-                    edited_yn=str(row[6]),
-                    upd_ts=str(row[7]),
-                    pattern_tags=self._parse_pattern_tags_json(row[8]),
-                    embedding=self._parse_embedding_json(row[9]),
+                    correct_kind=str(row[1]),
+                    space_nm=str(row[2]),
+                    sql_id=str(row[3]),
+                    source_sql=str(row[4]),
+                    generated_sql=str(row[5]),
+                    correct_sql=str(row[6]),
+                    edited_yn=str(row[7]),
+                    upd_ts=str(row[8]),
+                    pattern_tags=self._parse_pattern_tags_json(row[9]),
+                    embedding=self._parse_embedding_json(row[10]),
                 )
             )
         return result
@@ -340,20 +353,17 @@ class FeedbackRagService:
         query_tags: list[str],
         candidates: list[_VectorItem],
     ) -> list[tuple[_VectorItem, float]]:
-        """코사인 유사도 + 패턴 태그 일치 보너스로 정렬한다."""
         query_tag_set = set(query_tags)
         scored: list[tuple[_VectorItem, float]] = []
         for item in candidates:
             cosine = self._cosine_similarity(query_embedding, item.embedding)
             overlap = len(query_tag_set.intersection(item.pattern_tags))
             bonus = min(0.20, overlap * 0.05)
-            score = cosine + bonus
-            scored.append((item, score))
+            scored.append((item, cosine + bonus))
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored
 
     def _extract_pattern_tags(self, *texts: str) -> list[str]:
-        """복합형 SQL 패턴 태그를 추출한다."""
         merged = " ".join((text or "") for text in texts)
         upper = merged.upper()
         tags: set[str] = set()
@@ -382,7 +392,6 @@ class FeedbackRagService:
         return sorted(tags)
 
     def _embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """임베딩 API 호출."""
         endpoint = self._require_env("RAG_EMBED_BASE_URL")
         model = os.getenv("RAG_EMBED_MODEL", "BAAI/bge-m3")
         api_key = os.getenv("RAG_EMBED_API_KEY", "").strip()
@@ -403,7 +412,6 @@ class FeedbackRagService:
         return vectors
 
     def _parse_embeddings_from_response(self, body: Any) -> list[list[float]]:
-        """OpenAI 호환/일반 임베딩 응답 파싱."""
         if isinstance(body, dict):
             data = body.get("data")
             if isinstance(data, list):
@@ -430,7 +438,6 @@ class FeedbackRagService:
         raise ValueError(f"Unsupported embedding response format: {str(body)[:500]}")
 
     def _parse_embedding_json(self, raw: Any) -> list[float]:
-        """DB embedding_json 복원."""
         try:
             parsed = json.loads(str(raw))
             if isinstance(parsed, list):
@@ -440,7 +447,6 @@ class FeedbackRagService:
         return []
 
     def _parse_pattern_tags_json(self, raw: Any) -> list[str]:
-        """DB pattern_tags_json 복원."""
         try:
             parsed = json.loads(str(raw))
             if isinstance(parsed, list):
@@ -450,7 +456,6 @@ class FeedbackRagService:
         return []
 
     def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        """코사인 유사도 계산."""
         if not a or not b or len(a) != len(b):
             return -1.0
         dot = 0.0
@@ -465,15 +470,19 @@ class FeedbackRagService:
         return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
 
     def _sha256(self, text: str) -> str:
-        """문서 해시."""
         return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
 
     def _require_env(self, name: str) -> str:
-        """필수 환경변수 조회."""
         value = os.getenv(name, "").strip()
         if not value:
             raise ValueError(f"Required environment variable '{name}' is not set.")
         return value
+
+    def _normalize_correct_kind(self, correct_kind: str) -> str:
+        normalized = (correct_kind or "").strip().upper()
+        if normalized not in _VALID_CORRECT_KINDS:
+            raise ValueError(f"Unsupported correct SQL kind: {correct_kind}")
+        return normalized
 
 
 feedback_rag_service = FeedbackRagService()

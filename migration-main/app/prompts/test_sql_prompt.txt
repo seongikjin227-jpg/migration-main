@@ -48,3 +48,5 @@
 - 절대로 case를 임의 축소/샘플링하지 말 것
 - 절대로 case를 임의 추가하지 말 것
 - 결과 포맷은 어떤 입력이든 동일한 구조를 유지할 것
+
+- Oracle에서 UNION 또는 UNION ALL을 사용할 때는 각 SELECT 절 끝에 반드시 FROM DUAL을 명시할 것

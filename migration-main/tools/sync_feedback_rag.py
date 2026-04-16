@@ -1,9 +1,8 @@
-"""피드백 RAG 벡터 인덱스 수동 동기화 CLI."""
-
 from __future__ import annotations
 
 import argparse
 
+from _bootstrap import ROOT_DIR  # noqa: F401
 from app.services.feedback_rag_service import feedback_rag_service
 
 
@@ -13,7 +12,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=0,
-        help="코퍼스 최대 처리 건수. 0이면 .env의 RAG_CORPUS_LIMIT 사용",
+        help="Corpus ?? ?? ??. 0?? .env? RAG_CORPUS_LIMIT ??",
     )
     return parser
 
@@ -33,4 +32,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,11 +1,11 @@
 """매핑 룰 조회 리포지토리."""
 
-from app.config import (
+from app.db import (
     get_connection,
     get_mapping_rule_detail_table,
     get_mapping_rule_table,
 )
-from app.models import MappingRuleItem
+from app.common import MappingRuleItem
 
 
 def _to_text(value, default: str = "") -> str:

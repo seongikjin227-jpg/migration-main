@@ -13,8 +13,8 @@ import xml.etree.ElementTree as ET
 
 import oracledb
 
-from app.config import get_connection, get_result_table
-from app.logger import logger
+from app.db import get_connection, get_result_table
+from app.common import logger
 
 
 SUPPORTED_TAGS = {"select", "insert", "update", "delete", "sql"}

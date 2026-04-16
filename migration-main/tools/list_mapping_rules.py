@@ -1,55 +1,35 @@
-"""DB에 적재된 매핑 룰을 조회하는 CLI 유틸."""
-
-import argparse
+﻿import argparse
 import csv
 import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from _bootstrap import ROOT_DIR  # noqa: F401
 from app.repositories.mapper_repository import get_all_mapping_rules
 
 
 def _normalize(value: str) -> str:
-    """테이블명 비교용 대소문자 정규화."""
     return (value or "").strip().upper()
 
 
 def _matches_filter(value: str, expected: str | None) -> bool:
-    """필터가 비어 있거나 정규화 기준으로 정확히 일치하면 True."""
     if not expected:
         return True
     return _normalize(value) == _normalize(expected)
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """매핑 룰 조회 CLI 인자 파서를 생성한다."""
-    parser = argparse.ArgumentParser(
-        description="List mapping rules currently loaded by this project.",
-    )
+    parser = argparse.ArgumentParser(description="List mapping rules currently loaded by this project.")
     parser.add_argument("--fr-table", help="Filter by FR_TABLE (exact, case-insensitive).")
     parser.add_argument("--to-table", help="Filter by TO_TABLE (exact, case-insensitive).")
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        help="Maximum number of rows to print. 0 means no limit.",
-    )
-    parser.add_argument(
-        "--format",
-        choices=["table", "json", "csv"],
-        default="table",
-        help="Output format.",
-    )
-    parser.add_argument(
-        "--out",
-        help="Output file path for json/csv. If omitted, print to stdout.",
-    )
+    parser.add_argument("--limit", type=int, default=0, help="Maximum number of rows to print. 0 means no limit.")
+    parser.add_argument("--format", choices=["table", "json", "csv"], default="table", help="Output format.")
+    parser.add_argument("--out", help="Output file path for json/csv. If omitted, print to stdout.")
     return parser
 
 
 def _filter_rules(rules, fr_table: str | None, to_table: str | None):
-    """FR_TABLE/TO_TABLE 선택 필터를 적용한다."""
     filtered = []
     for rule in rules:
         if not _matches_filter(rule.fr_table, fr_table):
@@ -61,14 +41,12 @@ def _filter_rules(rules, fr_table: str | None, to_table: str | None):
 
 
 def _summarize(rules):
-    """전체 건수와 고유 FR/TO 테이블 수를 집계한다."""
     fr_tables = {_normalize(rule.fr_table) for rule in rules if (rule.fr_table or "").strip()}
     to_tables = {_normalize(rule.to_table) for rule in rules if (rule.to_table or "").strip()}
     return len(rules), len(fr_tables), len(to_tables)
 
 
 def _format_table(rules):
-    """매핑 룰을 고정폭 텍스트 테이블로 포맷한다."""
     headers = ["NO", "FR_TABLE", "FR_COL", "TO_TABLE", "TO_COL"]
     rows = []
     for idx, rule in enumerate(rules, start=1):
@@ -90,7 +68,6 @@ def _format_table(rules):
 
 
 def main():
-    """CLI 진입점."""
     parser = _build_parser()
     args = parser.parse_args()
 
@@ -107,10 +84,7 @@ def main():
         body = json.dumps(payload, ensure_ascii=False, indent=2)
         if args.out:
             Path(args.out).write_text(body, encoding="utf-8")
-            print(
-                f"Wrote {len(payload)} mapping rules to {args.out} "
-                f"(FR_TABLE={fr_table_count}, TO_TABLE={to_table_count})"
-            )
+            print(f"Wrote {len(payload)} mapping rules to {args.out} (FR_TABLE={fr_table_count}, TO_TABLE={to_table_count})")
         else:
             print(body)
         return
@@ -123,10 +97,7 @@ def main():
                 writer.writeheader()
                 for rule in filtered:
                     writer.writerow(asdict(rule))
-            print(
-                f"Wrote {len(filtered)} mapping rules to {args.out} "
-                f"(FR_TABLE={fr_table_count}, TO_TABLE={to_table_count})"
-            )
+            print(f"Wrote {len(filtered)} mapping rules to {args.out} (FR_TABLE={fr_table_count}, TO_TABLE={to_table_count})")
         else:
             writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames, lineterminator="\n")
             writer.writeheader()
@@ -134,10 +105,7 @@ def main():
                 writer.writerow(asdict(rule))
         return
 
-    print(
-        f"Loaded mapping rules: {total} rows "
-        f"(FR_TABLE={fr_table_count}, TO_TABLE={to_table_count})"
-    )
+    print(f"Loaded mapping rules: {total} rows (FR_TABLE={fr_table_count}, TO_TABLE={to_table_count})")
     if not filtered:
         print("No mapping rules matched your filters.")
         return

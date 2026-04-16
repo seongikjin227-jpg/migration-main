@@ -9,8 +9,8 @@
 import re
 from typing import Any
 
-from app.config import get_connection
-from app.exceptions import DBSqlError
+from app.db import get_connection
+from app.common import DBSqlError
 
 
 # 실행 가능한 SQL에 남아 있으면 안 되는 토큰들.

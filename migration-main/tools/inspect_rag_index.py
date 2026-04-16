@@ -1,11 +1,3 @@
-"""SQLite 벡터 인덱스(RAG) 확인용 CLI.
-
-예시:
-  python inspect_rag_index.py
-  python inspect_rag_index.py --limit 20
-  python inspect_rag_index.py --show-vector
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -14,17 +6,15 @@ import os
 import sqlite3
 from pathlib import Path
 
+from _bootstrap import ROOT_DIR  # noqa: F401
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Inspect feedback RAG vector index in SQLite.")
-    parser.add_argument("--db-path", default=os.getenv("RAG_VECTOR_DB_PATH", "migration.db"))
+    parser.add_argument("--db-path", default=os.getenv("RAG_VECTOR_DB_PATH", str(ROOT_DIR / "migration.db")))
     parser.add_argument("--table", default=os.getenv("RAG_VECTOR_TABLE", "feedback_rag_index"))
     parser.add_argument("--limit", type=int, default=10, help="Sample row count to print.")
-    parser.add_argument(
-        "--show-vector",
-        action="store_true",
-        help="Print first 8 vector values for each row.",
-    )
+    parser.add_argument("--show-vector", action="store_true", help="Print first 8 vector values for each row.")
     return parser
 
 
@@ -75,7 +65,7 @@ def main() -> None:
 
         rows = conn.execute(
             f"""
-            SELECT doc_id, space_nm, sql_id, edited_yn, upd_ts, embedding_json
+            SELECT doc_id, correct_kind, space_nm, sql_id, edited_yn, upd_ts, embedding_json
             FROM {args.table}
             ORDER BY upd_ts DESC
             LIMIT ?
@@ -88,7 +78,7 @@ def main() -> None:
         for idx, row in enumerate(rows, start=1):
             dim = _parse_dim(row["embedding_json"])
             print(
-                f"{idx}. doc_id={row['doc_id']} "
+                f"{idx}. doc_id={row['doc_id']} kind={row['correct_kind']} "
                 f"space_nm={row['space_nm']} sql_id={row['sql_id']} "
                 f"edited_yn={row['edited_yn']} upd_ts={row['upd_ts']} dim={dim}"
             )
@@ -98,4 +88,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

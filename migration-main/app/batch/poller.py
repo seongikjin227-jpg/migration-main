@@ -6,10 +6,10 @@
 
 import traceback
 
-from app.agent.mapper_sql_agent import MigrationOrchestrator
-from app.logger import logger
+from app.orchestrator import MigrationOrchestrator
+from app.common import logger
 from app.repositories.result_repository import get_pending_jobs, increment_batch_count
-from app.runtime import is_stop_requested
+from app.common import is_stop_requested
 
 
 orchestrator = MigrationOrchestrator()
