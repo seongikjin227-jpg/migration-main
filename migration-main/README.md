@@ -281,6 +281,22 @@ LLM_MODEL=gpt-4.1
 
 코드에서 일부 endpoint suffix는 정규화하지만, 루트 + `/v1` 형태가 가장 안전합니다.
 
+### 6.3 Oracle 스키마 분리 예시
+
+로그인 계정과 실제 테이블 소유 스키마가 다를 수 있으면 `.env` 에 아래도 명시합니다.
+
+```env
+ORACLE_USER=...
+ORACLE_PASSWORD=...
+ORACLE_DSN=...
+ORACLE_SCHEMA=HR
+```
+
+설명:
+- `ORACLE_USER`: 로그인 계정
+- `ORACLE_SCHEMA`: `NEXT_SQL_INFO`, `NEXT_MIG_INFO`, `NEXT_MIG_INFO_DTL` 를 조회할 스키마
+- `ORACLE_SCHEMA` 를 비우면 기존처럼 스키마 미지정 테이블명을 사용합니다.
+
 ## 7. TEST SQL 정책
 
 TEST SQL은 현재 deterministic builder를 사용합니다.

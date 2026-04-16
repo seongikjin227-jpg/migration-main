@@ -1,6 +1,6 @@
 """NEXT_SQL_INFO ?? ??/?? ?? repository."""
 
-from app.db import get_connection, get_result_table
+from app.db import get_connection, get_result_table, split_table_owner_and_name
 from app.common import SqlInfoJob
 
 _COLUMN_LENGTH_CACHE: dict[str, dict[str, int]] = {}
@@ -32,19 +32,30 @@ def _to_optional_text(value) -> str | None:
 
 
 def _get_column_data_lengths(table: str) -> dict[str, int]:
-    normalized_table = table.upper()
-    if normalized_table in _COLUMN_LENGTH_CACHE:
-        return _COLUMN_LENGTH_CACHE[normalized_table]
+    owner, normalized_table = split_table_owner_and_name(table)
+    cache_key = f"{owner or ''}.{normalized_table}"
+    if cache_key in _COLUMN_LENGTH_CACHE:
+        return _COLUMN_LENGTH_CACHE[cache_key]
 
-    query = """
-        SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH
-        FROM USER_TAB_COLUMNS
-        WHERE TABLE_NAME = :1
-    """
+    if owner:
+        query = """
+            SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH
+            FROM ALL_TAB_COLUMNS
+            WHERE OWNER = :1
+              AND TABLE_NAME = :2
+        """
+        params = [owner, normalized_table]
+    else:
+        query = """
+            SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH
+            FROM USER_TAB_COLUMNS
+            WHERE TABLE_NAME = :1
+        """
+        params = [normalized_table]
     lengths: dict[str, int] = {}
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, [normalized_table])
+        cursor.execute(query, params)
         for col_name, data_type, data_length in cursor.fetchall():
             col = _to_text(col_name).upper()
             dtype = _to_text(data_type).upper()
@@ -55,28 +66,39 @@ def _get_column_data_lengths(table: str) -> dict[str, int]:
             except Exception:
                 continue
 
-    _COLUMN_LENGTH_CACHE[normalized_table] = lengths
+    _COLUMN_LENGTH_CACHE[cache_key] = lengths
     return lengths
 
 
 def _get_available_columns(table: str) -> set[str]:
-    normalized_table = table.upper()
-    if normalized_table in _AVAILABLE_COLUMNS_CACHE:
-        return _AVAILABLE_COLUMNS_CACHE[normalized_table]
+    owner, normalized_table = split_table_owner_and_name(table)
+    cache_key = f"{owner or ''}.{normalized_table}"
+    if cache_key in _AVAILABLE_COLUMNS_CACHE:
+        return _AVAILABLE_COLUMNS_CACHE[cache_key]
 
-    query = """
-        SELECT COLUMN_NAME
-        FROM USER_TAB_COLUMNS
-        WHERE TABLE_NAME = :1
-    """
+    if owner:
+        query = """
+            SELECT COLUMN_NAME
+            FROM ALL_TAB_COLUMNS
+            WHERE OWNER = :1
+              AND TABLE_NAME = :2
+        """
+        params = [owner, normalized_table]
+    else:
+        query = """
+            SELECT COLUMN_NAME
+            FROM USER_TAB_COLUMNS
+            WHERE TABLE_NAME = :1
+        """
+        params = [normalized_table]
     columns: set[str] = set()
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, [normalized_table])
+        cursor.execute(query, params)
         for (col_name,) in cursor.fetchall():
             columns.add(_to_text(col_name).upper())
 
-    _AVAILABLE_COLUMNS_CACHE[normalized_table] = columns
+    _AVAILABLE_COLUMNS_CACHE[cache_key] = columns
     return columns
 
 

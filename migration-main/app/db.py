@@ -17,6 +17,27 @@ def _get_required_env(name: str) -> str:
     return value
 
 
+def get_oracle_schema() -> str:
+    return (os.getenv("ORACLE_SCHEMA") or "").strip().upper()
+
+
+def qualify_table_name(table_name: str) -> str:
+    schema = get_oracle_schema()
+    clean_table = (table_name or "").strip()
+    if not schema or not clean_table or "." in clean_table:
+        return clean_table
+    return f"{schema}.{clean_table}"
+
+
+def split_table_owner_and_name(table_name: str) -> tuple[str | None, str]:
+    clean_table = (table_name or "").strip().upper()
+    if "." in clean_table:
+        owner, name = clean_table.split(".", 1)
+        return owner, name
+    schema = get_oracle_schema()
+    return (schema or None), clean_table
+
+
 def get_connection():
     global _CLIENT_INITIALIZED
 
@@ -35,12 +56,12 @@ def get_connection():
 
 
 def get_mapping_rule_table() -> str:
-    return "NEXT_MIG_INFO"
+    return qualify_table_name("NEXT_MIG_INFO")
 
 
 def get_mapping_rule_detail_table() -> str:
-    return "NEXT_MIG_INFO_DTL"
+    return qualify_table_name("NEXT_MIG_INFO_DTL")
 
 
 def get_result_table() -> str:
-    return "NEXT_SQL_INFO"
+    return qualify_table_name("NEXT_SQL_INFO")
