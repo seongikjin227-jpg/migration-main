@@ -102,6 +102,17 @@ def _get_available_columns(table: str) -> set[str]:
     return columns
 
 
+def _can_select_column(table: str, column_name: str) -> bool:
+    query = f"SELECT {column_name} FROM {table} WHERE 1 = 0"
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query)
+        return True
+    except Exception:
+        return False
+
+
 def _row_to_sql_info_job(row) -> SqlInfoJob:
     return SqlInfoJob(
         row_id=row[0],
@@ -241,6 +252,15 @@ def get_feedback_corpus_rows(correct_kind: str, limit: int = 2000) -> list[dict[
     else:
         return []
 
+    if not _can_select_column(table, correct_column):
+        if correct_column != _LEGACY_CORRECT_COLUMN and _LEGACY_CORRECT_COLUMN in available_columns:
+            if _can_select_column(table, _LEGACY_CORRECT_COLUMN):
+                correct_column = _LEGACY_CORRECT_COLUMN
+            else:
+                return []
+        else:
+            return []
+
     query = f"""
         SELECT ROWIDTOCHAR(ROWID) AS RID,
                TO_CHAR(SPACE_NM),
@@ -248,7 +268,7 @@ def get_feedback_corpus_rows(correct_kind: str, limit: int = 2000) -> list[dict[
                FR_SQL_TEXT,
                EDIT_FR_SQL,
                TO_SQL_TEXT,
-               {correct_column} AS CORRECT_SQL,
+               CORRECT_SQL,
                EDITED_YN,
                UPD_TS
         FROM (

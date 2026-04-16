@@ -57,7 +57,10 @@ class FeedbackRagService:
         target_limit = limit if (limit and limit > 0) else self.corpus_limit
         source_rows: list[dict[str, str]] = []
         for correct_kind in _VALID_CORRECT_KINDS:
-            source_rows.extend(get_feedback_corpus_rows(correct_kind=correct_kind, limit=target_limit))
+            try:
+                source_rows.extend(get_feedback_corpus_rows(correct_kind=correct_kind, limit=target_limit))
+            except Exception:
+                continue
 
         source_doc_ids: set[str] = set()
         existing_hash = self._load_existing_doc_hash()
