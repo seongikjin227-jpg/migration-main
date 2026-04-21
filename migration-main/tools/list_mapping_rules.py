@@ -1,4 +1,6 @@
-﻿import argparse
+"""CLI utility that lists mapping rules from the configured Oracle tables."""
+
+import argparse
 import csv
 import json
 import sys
@@ -10,16 +12,19 @@ from app.repositories.mapper_repository import get_all_mapping_rules
 
 
 def _normalize(value: str) -> str:
+    """Normalize strings for case-insensitive exact matching."""
     return (value or "").strip().upper()
 
 
 def _matches_filter(value: str, expected: str | None) -> bool:
+    """Return True when the value matches the optional filter."""
     if not expected:
         return True
     return _normalize(value) == _normalize(expected)
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser for listing mapping rules."""
     parser = argparse.ArgumentParser(description="List mapping rules currently loaded by this project.")
     parser.add_argument("--fr-table", help="Filter by FR_TABLE (exact, case-insensitive).")
     parser.add_argument("--to-table", help="Filter by TO_TABLE (exact, case-insensitive).")
@@ -30,6 +35,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _filter_rules(rules, fr_table: str | None, to_table: str | None):
+    """Apply the requested FR/TO table filters."""
     filtered = []
     for rule in rules:
         if not _matches_filter(rule.fr_table, fr_table):
@@ -41,12 +47,14 @@ def _filter_rules(rules, fr_table: str | None, to_table: str | None):
 
 
 def _summarize(rules):
+    """Return counts for rows, unique FR tables, and unique TO tables."""
     fr_tables = {_normalize(rule.fr_table) for rule in rules if (rule.fr_table or "").strip()}
     to_tables = {_normalize(rule.to_table) for rule in rules if (rule.to_table or "").strip()}
     return len(rules), len(fr_tables), len(to_tables)
 
 
 def _format_table(rules):
+    """Format rules into an aligned plain-text table."""
     headers = ["NO", "FR_TABLE", "FR_COL", "TO_TABLE", "TO_COL"]
     rows = []
     for idx, rule in enumerate(rules, start=1):
@@ -58,6 +66,7 @@ def _format_table(rules):
             widths[i] = max(widths[i], len(value or ""))
 
     def format_row(values):
+        """Render one row using the precomputed widths."""
         return " | ".join((values[i] or "").ljust(widths[i]) for i in range(len(values)))
 
     separator = "-+-".join("-" * width for width in widths)
@@ -68,6 +77,7 @@ def _format_table(rules):
 
 
 def main():
+    """CLI entry point for listing mapping rules."""
     parser = _build_parser()
     args = parser.parse_args()
 

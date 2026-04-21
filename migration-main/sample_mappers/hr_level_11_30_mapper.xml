@@ -1,0 +1,749 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="HR_LEVEL_SCENARIOS">
+
+  <select id="level11">
+    <![CDATA[
+    SELECT
+        s.EMPLOYEE_ID,
+        s.FIRST_NAME,
+        s.LAST_NAME,
+        s.EMAIL,
+        s.HIRE_DATE,
+        s.JOB_ID,
+        s.SALARY,
+        s.TENURE_MONTHS,
+        s.DEPT_EMP_COUNT,
+        s.DEPT_AVG_SALARY,
+        s.DEPT_MAX_SALARY,
+        s.DEPT_SALARY_RANK,
+        NVL(s.PREV_SALARY_IN_DEPT, s.SALARY) AS PREV_SALARY_IN_DEPT,
+        CASE
+            WHEN s.SALARY >= s.DEPT_AVG_SALARY THEN 'ABOVE_DEPT_AVG'
+            ELSE 'BELOW_DEPT_AVG'
+        END AS DEPT_AVG_POSITION
+    FROM (
+        SELECT
+            e.EMPLOYEE_ID,
+            e.FIRST_NAME,
+            e.LAST_NAME,
+            e.EMAIL,
+            e.HIRE_DATE,
+            e.JOB_ID,
+            e.SALARY,
+            TRUNC(MONTHS_BETWEEN(TRUNC(SYSDATE), TRUNC(e.HIRE_DATE))) AS TENURE_MONTHS,
+            COUNT(*) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_EMP_COUNT,
+            AVG(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_AVG_SALARY,
+            MAX(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_MAX_SALARY,
+            ROW_NUMBER() OVER (PARTITION BY e.DEPARTMENT_ID ORDER BY e.SALARY DESC, e.EMPLOYEE_ID) AS DEPT_SALARY_RANK,
+            LAG(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID ORDER BY e.SALARY DESC, e.EMPLOYEE_ID) AS PREV_SALARY_IN_DEPT
+        FROM EMPLOYEES e
+        WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+          AND e.JOB_ID = #{p_job_id}
+          AND e.SALARY >= #{p_min_salary}
+    ) s
+    WHERE s.TENURE_MONTHS >= 0
+    ORDER BY s.JOB_ID, s.SALARY DESC, s.EMPLOYEE_ID
+    ]]>
+  </select>
+
+  <select id="level12">
+    <![CDATA[
+    SELECT
+        g.JOB_ID,
+        g.EMP_COUNT,
+        g.TOTAL_SALARY,
+        g.AVG_SALARY,
+        g.MIN_SALARY,
+        g.MAX_SALARY,
+        g.P50_SALARY,
+        g.HIGH_EARNER_COUNT,
+        g.LOW_EARNER_COUNT,
+        ROUND(g.HIGH_EARNER_RATIO, 6) AS HIGH_EARNER_RATIO,
+        CASE
+            WHEN g.AVG_SALARY >= g.P50_SALARY THEN 'AVG_ABOVE_MEDIAN'
+            ELSE 'AVG_BELOW_MEDIAN'
+        END AS AVG_VS_MEDIAN_STATUS
+    FROM (
+        SELECT
+            x.JOB_ID,
+            COUNT(*) AS EMP_COUNT,
+            SUM(x.SALARY) AS TOTAL_SALARY,
+            AVG(x.SALARY) AS AVG_SALARY,
+            MIN(x.SALARY) AS MIN_SALARY,
+            MAX(x.SALARY) AS MAX_SALARY,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x.SALARY) AS P50_SALARY,
+            SUM(CASE WHEN x.SALARY >= #{p_high_salary} THEN 1 ELSE 0 END) AS HIGH_EARNER_COUNT,
+            SUM(CASE WHEN x.SALARY < #{p_high_salary} THEN 1 ELSE 0 END) AS LOW_EARNER_COUNT,
+            RATIO_TO_REPORT(SUM(CASE WHEN x.SALARY >= #{p_high_salary} THEN 1 ELSE 0 END)) OVER () AS HIGH_EARNER_RATIO
+        FROM (
+            SELECT
+                e.JOB_ID,
+                e.SALARY
+            FROM EMPLOYEES e
+            WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+              AND e.SALARY >= #{p_min_salary}
+        ) x
+        GROUP BY x.JOB_ID
+    ) g
+    WHERE g.EMP_COUNT >= #{p_min_emp_count}
+    ORDER BY g.AVG_SALARY DESC, g.JOB_ID
+    ]]>
+  </select>
+
+  <select id="level13">
+    <![CDATA[
+    SELECT
+        q.EMPLOYEE_ID,
+        q.JOB_ID,
+        q.SALARY,
+        q.TENURE_MONTHS,
+        q.SALARY_SHARE_IN_JOB,
+        q.JOB_SALARY_RN,
+        q.JOB_SALARY_DR,
+        q.JOB_SALARY_QUARTILE,
+        NVL(q.PREV_SALARY_IN_JOB, q.SALARY) AS PREV_SALARY_IN_JOB,
+        q.NEXT_SALARY_IN_JOB,
+        ROUND(q.SALARY_GAP_FROM_JOB_AVG, 2) AS SALARY_GAP_FROM_JOB_AVG,
+        CASE
+            WHEN q.JOB_SALARY_RN = 1 THEN 'TOP_IN_JOB'
+            WHEN q.JOB_SALARY_RN <= 3 THEN 'TOP3_IN_JOB'
+            ELSE 'GENERAL_IN_JOB'
+        END AS JOB_RANK_BAND
+    FROM (
+        SELECT
+            b.EMPLOYEE_ID,
+            b.JOB_ID,
+            b.SALARY,
+            b.TENURE_MONTHS,
+            b.SALARY_SHARE_IN_JOB,
+            ROW_NUMBER() OVER (PARTITION BY b.JOB_ID ORDER BY b.SALARY DESC, b.EMPLOYEE_ID) AS JOB_SALARY_RN,
+            DENSE_RANK() OVER (PARTITION BY b.JOB_ID ORDER BY b.SALARY DESC) AS JOB_SALARY_DR,
+            NTILE(4) OVER (PARTITION BY b.JOB_ID ORDER BY b.SALARY DESC, b.EMPLOYEE_ID) AS JOB_SALARY_QUARTILE,
+            LAG(b.SALARY) OVER (PARTITION BY b.JOB_ID ORDER BY b.SALARY DESC, b.EMPLOYEE_ID) AS PREV_SALARY_IN_JOB,
+            LEAD(b.SALARY) OVER (PARTITION BY b.JOB_ID ORDER BY b.SALARY DESC, b.EMPLOYEE_ID) AS NEXT_SALARY_IN_JOB,
+            b.SALARY - AVG(b.SALARY) OVER (PARTITION BY b.JOB_ID) AS SALARY_GAP_FROM_JOB_AVG
+        FROM (
+            SELECT
+                e.EMPLOYEE_ID,
+                e.JOB_ID,
+                e.SALARY,
+                TRUNC(MONTHS_BETWEEN(TRUNC(SYSDATE), TRUNC(e.HIRE_DATE))) AS TENURE_MONTHS,
+                RATIO_TO_REPORT(e.SALARY) OVER (PARTITION BY e.JOB_ID) AS SALARY_SHARE_IN_JOB
+            FROM EMPLOYEES e
+            WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+              AND e.JOB_ID = #{p_job_id}
+              AND e.SALARY >= #{p_min_salary}
+        ) b
+    ) q
+    WHERE q.TENURE_MONTHS >= 0
+    ORDER BY q.JOB_ID, q.SALARY DESC, q.EMPLOYEE_ID
+    ]]>
+  </select>
+
+  <select id="level14">
+    <![CDATA[
+    SELECT
+        r.EMPLOYEE_ID,
+        r.EMP_NAME,
+        r.JOB_ID,
+        r.JOB_TITLE,
+        r.SALARY,
+        r.MIN_SALARY,
+        r.MAX_SALARY,
+        r.JOB_EMP_COUNT,
+        r.JOB_AVG_SALARY,
+        r.JOB_MAX_SALARY,
+        ROUND(r.SALARY_TO_JOB_AVG_RATIO, 6) AS SALARY_TO_JOB_AVG_RATIO,
+        CASE
+            WHEN r.SALARY > r.MAX_SALARY THEN 'ABOVE_JOB_MAX'
+            WHEN r.SALARY < r.MIN_SALARY THEN 'BELOW_JOB_MIN'
+            ELSE 'IN_JOB_RANGE'
+        END AS JOB_RANGE_STATUS
+    FROM (
+        SELECT
+            e.EMPLOYEE_ID,
+            e.FIRST_NAME || ' ' || e.LAST_NAME AS EMP_NAME,
+            e.JOB_ID,
+            j.JOB_TITLE,
+            e.SALARY,
+            j.MIN_SALARY,
+            j.MAX_SALARY,
+            COUNT(*) OVER (PARTITION BY e.JOB_ID) AS JOB_EMP_COUNT,
+            AVG(e.SALARY) OVER (PARTITION BY e.JOB_ID) AS JOB_AVG_SALARY,
+            MAX(e.SALARY) OVER (PARTITION BY e.JOB_ID) AS JOB_MAX_SALARY,
+            e.SALARY / NULLIF(AVG(e.SALARY) OVER (PARTITION BY e.JOB_ID), 0) AS SALARY_TO_JOB_AVG_RATIO
+        FROM EMPLOYEES e
+        JOIN JOBS j
+          ON e.JOB_ID = j.JOB_ID
+        WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+          AND e.JOB_ID = #{p_job_id}
+          AND e.SALARY >= #{p_min_salary}
+    ) r
+    ORDER BY r.JOB_ID, r.SALARY DESC, r.EMPLOYEE_ID
+    ]]>
+  </select>
+
+  <select id="level15">
+    <![CDATA[
+    SELECT
+        s.JOB_ID,
+        s.JOB_TITLE,
+        s.EMP_COUNT,
+        s.TOTAL_SALARY,
+        s.AVG_SALARY,
+        s.MIN_SALARY,
+        s.MAX_SALARY,
+        s.EMP_P50_SALARY,
+        s.JOB_MIN_SALARY,
+        s.JOB_MAX_SALARY,
+        s.ABOVE_JOB_MAX_COUNT,
+        s.BELOW_JOB_MIN_COUNT,
+        CASE
+            WHEN s.AVG_SALARY >= s.EMP_P50_SALARY THEN 'AVG_AT_OR_ABOVE_MEDIAN'
+            ELSE 'AVG_BELOW_MEDIAN'
+        END AS JOB_PAY_STATUS
+    FROM (
+        SELECT
+            e.JOB_ID,
+            j.JOB_TITLE,
+            COUNT(*) AS EMP_COUNT,
+            SUM(e.SALARY) AS TOTAL_SALARY,
+            AVG(e.SALARY) AS AVG_SALARY,
+            MIN(e.SALARY) AS MIN_SALARY,
+            MAX(e.SALARY) AS MAX_SALARY,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY e.SALARY) AS EMP_P50_SALARY,
+            MIN(j.MIN_SALARY) AS JOB_MIN_SALARY,
+            MAX(j.MAX_SALARY) AS JOB_MAX_SALARY,
+            SUM(CASE WHEN e.SALARY > j.MAX_SALARY THEN 1 ELSE 0 END) AS ABOVE_JOB_MAX_COUNT,
+            SUM(CASE WHEN e.SALARY < j.MIN_SALARY THEN 1 ELSE 0 END) AS BELOW_JOB_MIN_COUNT
+        FROM EMPLOYEES e
+        JOIN JOBS j
+          ON e.JOB_ID = j.JOB_ID
+        WHERE e.SALARY >= #{p_min_salary}
+          AND e.EMPLOYEE_ID >= #{p_emp_id_min}
+        GROUP BY e.JOB_ID, j.JOB_TITLE
+    ) s
+    WHERE s.EMP_COUNT >= #{p_min_emp_count}
+    ORDER BY s.AVG_SALARY DESC, s.JOB_ID
+    ]]>
+  </select>
+
+  <select id="level16">
+    <![CDATA[
+    SELECT
+        z.EMPLOYEE_ID,
+        z.EMP_NAME,
+        z.JOB_ID,
+        z.JOB_TITLE,
+        z.SALARY,
+        z.MIN_SALARY,
+        z.MAX_SALARY,
+        z.JOB_SALARY_RANK,
+        z.JOB_SALARY_DENSE_RANK,
+        z.JOB_EMP_COUNT,
+        ROUND(z.SALARY_GAP_FROM_MAX, 2) AS SALARY_GAP_FROM_MAX,
+        ROUND(z.SALARY_GAP_FROM_MIN, 2) AS SALARY_GAP_FROM_MIN,
+        CASE
+            WHEN z.SALARY > z.MAX_SALARY THEN 'ABOVE_JOB_MAX'
+            WHEN z.SALARY < z.MIN_SALARY THEN 'BELOW_JOB_MIN'
+            ELSE 'IN_JOB_RANGE'
+        END AS JOB_RANGE_STATUS
+    FROM (
+        SELECT
+            e.EMPLOYEE_ID,
+            e.FIRST_NAME || ' ' || e.LAST_NAME AS EMP_NAME,
+            e.JOB_ID,
+            j.JOB_TITLE,
+            e.SALARY,
+            j.MIN_SALARY,
+            j.MAX_SALARY,
+            ROW_NUMBER() OVER (PARTITION BY e.JOB_ID ORDER BY e.SALARY DESC, e.EMPLOYEE_ID) AS JOB_SALARY_RANK,
+            DENSE_RANK() OVER (PARTITION BY e.JOB_ID ORDER BY e.SALARY DESC) AS JOB_SALARY_DENSE_RANK,
+            COUNT(*) OVER (PARTITION BY e.JOB_ID) AS JOB_EMP_COUNT,
+            j.MAX_SALARY - e.SALARY AS SALARY_GAP_FROM_MAX,
+            e.SALARY - j.MIN_SALARY AS SALARY_GAP_FROM_MIN
+        FROM EMPLOYEES e
+        JOIN JOBS j
+          ON e.JOB_ID = j.JOB_ID
+        WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+          AND e.SALARY >= #{p_min_salary}
+    ) z
+    WHERE z.JOB_SALARY_RANK <= #{p_top_n}
+    ORDER BY z.JOB_ID, z.JOB_SALARY_RANK, z.EMPLOYEE_ID
+    ]]>
+  </select>
+
+  <select id="level17">
+    <![CDATA[
+    SELECT
+        m.EMPLOYEE_ID,
+        m.FIRST_NAME,
+        m.LAST_NAME,
+        m.EMAIL,
+        m.PHONE_NUMBER,
+        m.HIRE_DATE,
+        m.DEPARTMENT_ID,
+        m.DEPARTMENT_NAME,
+        m.JOB_ID,
+        m.JOB_TITLE,
+        m.SALARY,
+        m.COMMISSION_PCT,
+        m.MANAGER_ID,
+        m.DEPT_MANAGER_ID,
+        m.DEPT_EMP_COUNT,
+        m.DEPT_AVG_SALARY,
+        m.DEPT_MAX_SALARY,
+        m.JOB_SALARY_RANK,
+        CASE
+            WHEN m.SALARY >= 20000 THEN 'EXEC'
+            WHEN m.SALARY >= 12000 THEN 'HIGH'
+            WHEN m.SALARY >= 7000 THEN 'MID'
+            ELSE 'LOW'
+        END AS SALARY_BAND
+    FROM (
+        SELECT
+            e.EMPLOYEE_ID,
+            e.FIRST_NAME,
+            e.LAST_NAME,
+            e.EMAIL,
+            e.PHONE_NUMBER,
+            e.HIRE_DATE,
+            e.DEPARTMENT_ID,
+            d.DEPARTMENT_NAME,
+            e.JOB_ID,
+            j.JOB_TITLE,
+            e.SALARY,
+            e.COMMISSION_PCT,
+            e.MANAGER_ID,
+            d.MANAGER_ID AS DEPT_MANAGER_ID,
+            COUNT(*) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_EMP_COUNT,
+            AVG(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_AVG_SALARY,
+            MAX(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_MAX_SALARY,
+            ROW_NUMBER() OVER (PARTITION BY e.JOB_ID ORDER BY e.SALARY DESC, e.EMPLOYEE_ID) AS JOB_SALARY_RANK
+        FROM EMPLOYEES e
+        LEFT JOIN DEPARTMENTS d
+          ON d.DEPARTMENT_ID = e.DEPARTMENT_ID
+        LEFT JOIN JOBS j
+          ON j.JOB_ID = e.JOB_ID
+        WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+          AND e.SALARY >= #{p_min_salary}
+    ) m
+    ORDER BY m.DEPARTMENT_ID, m.JOB_ID, m.SALARY DESC, m.EMPLOYEE_ID
+    ]]>
+  </select>
+
+  <select id="level18">
+    <![CDATA[
+    SELECT
+        q.EMPLOYEE_ID,
+        q.DEPARTMENT_ID,
+        q.DEPARTMENT_NAME,
+        q.JOB_ID,
+        q.JOB_TITLE,
+        q.SALARY,
+        q.DEPT_SALARY_RANK,
+        q.DEPT_EMP_COUNT,
+        q.DEPT_TOTAL_SALARY,
+        q.DEPT_AVG_SALARY,
+        q.DEPT_P50_SALARY,
+        ROUND(q.SALARY_SHARE_IN_DEPT, 6) AS SALARY_SHARE_IN_DEPT,
+        CASE
+            WHEN q.SALARY >= q.DEPT_P50_SALARY THEN 'ABOVE_DEPT_MEDIAN'
+            ELSE 'BELOW_DEPT_MEDIAN'
+        END AS DEPT_MEDIAN_POSITION
+    FROM (
+        SELECT
+            e.EMPLOYEE_ID,
+            e.DEPARTMENT_ID,
+            d.DEPARTMENT_NAME,
+            e.JOB_ID,
+            j.JOB_TITLE,
+            e.SALARY,
+            ROW_NUMBER() OVER (PARTITION BY e.DEPARTMENT_ID ORDER BY e.SALARY DESC, e.EMPLOYEE_ID) AS DEPT_SALARY_RANK,
+            COUNT(*) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_EMP_COUNT,
+            SUM(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_TOTAL_SALARY,
+            AVG(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_AVG_SALARY,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_P50_SALARY,
+            RATIO_TO_REPORT(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS SALARY_SHARE_IN_DEPT
+        FROM EMPLOYEES e
+        LEFT JOIN DEPARTMENTS d
+          ON d.DEPARTMENT_ID = e.DEPARTMENT_ID
+        LEFT JOIN JOBS j
+          ON j.JOB_ID = e.JOB_ID
+        WHERE e.DEPARTMENT_ID = #{p_department_id}
+          AND e.SALARY >= #{p_min_salary}
+    ) q
+    ORDER BY q.DEPARTMENT_ID, q.DEPT_SALARY_RANK, q.EMPLOYEE_ID
+    ]]>
+  </select>
+
+  <select id="level19">
+    <![CDATA[
+    SELECT
+        t.EMPLOYEE_ID,
+        t.DEPARTMENT_NAME,
+        t.JOB_TITLE,
+        t.SALARY,
+        t.MIN_SALARY,
+        t.MAX_SALARY,
+        t.DEPT_AVG_SALARY,
+        t.DEPT_MAX_SALARY,
+        t.JOB_MIN_SALARY,
+        t.JOB_MAX_SALARY,
+        t.MANAGER_EXISTS_YN,
+        CASE
+            WHEN t.MAX_SALARY IS NULL THEN 'NO_JOB_RANGE'
+            WHEN t.SALARY > t.MAX_SALARY THEN 'ABOVE_JOB_MAX'
+            WHEN t.SALARY < t.MIN_SALARY THEN 'BELOW_JOB_MIN'
+            ELSE 'IN_JOB_RANGE'
+        END AS JOB_RANGE_STATUS,
+        CASE
+            WHEN t.SALARY >= t.DEPT_AVG_SALARY THEN 'ABOVE_DEPT_AVG'
+            ELSE 'BELOW_DEPT_AVG'
+        END AS DEPT_AVG_POSITION
+    FROM (
+        SELECT
+            e.EMPLOYEE_ID,
+            d.DEPARTMENT_NAME,
+            j.JOB_TITLE,
+            e.SALARY,
+            j.MIN_SALARY,
+            j.MAX_SALARY,
+            AVG(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_AVG_SALARY,
+            MAX(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_MAX_SALARY,
+            MIN(e.SALARY) OVER (PARTITION BY e.JOB_ID) AS JOB_MIN_SALARY,
+            MAX(e.SALARY) OVER (PARTITION BY e.JOB_ID) AS JOB_MAX_SALARY,
+            CASE
+                WHEN e.MANAGER_ID IS NULL THEN 'NO_MANAGER'
+                ELSE 'HAS_MANAGER'
+            END AS MANAGER_EXISTS_YN
+        FROM EMPLOYEES e
+        LEFT JOIN DEPARTMENTS d
+          ON d.DEPARTMENT_ID = e.DEPARTMENT_ID
+        LEFT JOIN JOBS j
+          ON j.JOB_ID = e.JOB_ID
+        WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+          AND e.DEPARTMENT_ID = #{p_department_id}
+    ) t
+    ORDER BY t.DEPARTMENT_NAME, t.JOB_TITLE, t.SALARY DESC, t.EMPLOYEE_ID
+    ]]>
+  </select>
+
+  <select id="level20">
+    <![CDATA[
+    SELECT
+        x.EMPLOYEE_ID,
+        x.FIRST_NAME,
+        x.LAST_NAME,
+        x.DEPARTMENT_NAME,
+        x.JOB_TITLE,
+        x.CURRENT_SALARY,
+        x.COMMISSION_PCT,
+        x.JOB_SALARY_RANK,
+        x.DEPT_SALARY_RANK,
+        x.DEPT_EMP_COUNT,
+        x.JOB_EMP_COUNT,
+        x.DEPT_AVG_SALARY,
+        x.JOB_AVG_SALARY,
+        ROUND(x.SALARY_SHARE_IN_JOB, 6) AS SALARY_SHARE_IN_JOB,
+        ROUND(x.SALARY_SHARE_IN_DEPT, 6) AS SALARY_SHARE_IN_DEPT,
+        CASE
+            WHEN x.JOB_SALARY_RANK = 1 THEN 'TOP_IN_JOB'
+            WHEN x.DEPT_SALARY_RANK = 1 THEN 'TOP_IN_DEPT'
+            ELSE 'GENERAL'
+        END AS SALARY_POSITION
+    FROM (
+        SELECT
+            e.EMPLOYEE_ID,
+            e.FIRST_NAME,
+            e.LAST_NAME,
+            d.DEPARTMENT_NAME,
+            j.JOB_TITLE,
+            e.SALARY AS CURRENT_SALARY,
+            NVL(e.COMMISSION_PCT, 0) AS COMMISSION_PCT,
+            DENSE_RANK() OVER (PARTITION BY e.JOB_ID ORDER BY e.SALARY DESC) AS JOB_SALARY_RANK,
+            ROW_NUMBER() OVER (PARTITION BY e.DEPARTMENT_ID ORDER BY e.SALARY DESC, e.EMPLOYEE_ID) AS DEPT_SALARY_RANK,
+            COUNT(*) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_EMP_COUNT,
+            COUNT(*) OVER (PARTITION BY e.JOB_ID) AS JOB_EMP_COUNT,
+            AVG(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS DEPT_AVG_SALARY,
+            AVG(e.SALARY) OVER (PARTITION BY e.JOB_ID) AS JOB_AVG_SALARY,
+            RATIO_TO_REPORT(e.SALARY) OVER (PARTITION BY e.JOB_ID) AS SALARY_SHARE_IN_JOB,
+            RATIO_TO_REPORT(e.SALARY) OVER (PARTITION BY e.DEPARTMENT_ID) AS SALARY_SHARE_IN_DEPT
+        FROM EMPLOYEES e
+        LEFT JOIN DEPARTMENTS d
+          ON d.DEPARTMENT_ID = e.DEPARTMENT_ID
+        LEFT JOIN JOBS j
+          ON j.JOB_ID = e.JOB_ID
+        WHERE e.SALARY >= #{p_min_salary}
+          AND e.EMPLOYEE_ID >= #{p_emp_id_min}
+    ) x
+    ORDER BY x.DEPARTMENT_NAME, x.JOB_TITLE, x.CURRENT_SALARY DESC, x.EMPLOYEE_ID
+    ]]>
+  </select>
+
+  <select id="level21">
+    <![CDATA[
+    SELECT
+        *
+    FROM (
+        SELECT DISTINCT
+            d.DEPARTMENT_ID,
+            d.DEPARTMENT_NAME,
+            e.EMPLOYEE_ID,
+            e.FIRST_NAME,
+            e.LAST_NAME,
+            e.SALARY,
+            jh.JOB_ID,
+            jh.START_DATE,
+            jh.END_DATE
+        FROM DEPARTMENTS d
+        JOIN EMPLOYEES e
+          ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+        LEFT JOIN JOB_HISTORY jh
+          ON jh.EMPLOYEE_ID = e.EMPLOYEE_ID
+        WHERE d.DEPARTMENT_ID >= #{p_department_id_min}
+          AND e.SALARY >= #{p_min_salary}
+          AND e.SALARY >= #{p_min_salary}
+    ) bad_dept_emp
+    WHERE 1 = 1
+      AND 1 = 1
+    ]]>
+  </select>
+
+  <select id="level22">
+    <![CDATA[
+    SELECT
+        t.DEPARTMENT_ID,
+        t.DEPARTMENT_NAME,
+        t.EMP_COUNT,
+        t.TOTAL_SALARY,
+        t.AVG_SALARY
+    FROM (
+        SELECT
+            d.DEPARTMENT_ID,
+            d.DEPARTMENT_NAME,
+            COUNT(e.EMPLOYEE_ID) AS EMP_COUNT,
+            SUM(e.SALARY) AS TOTAL_SALARY,
+            AVG(e.SALARY) AS AVG_SALARY
+        FROM DEPARTMENTS d
+        LEFT JOIN EMPLOYEES e
+          ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+        GROUP BY d.DEPARTMENT_ID, d.DEPARTMENT_NAME
+        HAVING d.DEPARTMENT_ID >= #{p_department_id_min}
+           AND d.DEPARTMENT_ID >= #{p_department_id_min}
+    ) t
+    WHERE TO_CHAR(t.DEPARTMENT_ID) || '-' || TO_CHAR(t.EMP_COUNT) LIKE #{p_dept_emp_pattern}
+    ]]>
+  </select>
+
+  <select id="level23">
+    <![CDATA[
+    SELECT
+        x.DEPARTMENT_ID,
+        x.DEPARTMENT_NAME,
+        x.EMP_COUNT,
+        x.AVG_SALARY
+    FROM (
+        SELECT
+            d.DEPARTMENT_ID,
+            d.DEPARTMENT_NAME,
+            COUNT(e.EMPLOYEE_ID) AS EMP_COUNT,
+            AVG(e.SALARY) AS AVG_SALARY,
+            (SELECT COUNT(*)
+             FROM EMPLOYEES e2
+             WHERE e2.DEPARTMENT_ID = d.DEPARTMENT_ID
+               AND e2.SALARY > (
+                   SELECT AVG(e3.SALARY)
+                   FROM EMPLOYEES e3
+                   WHERE e3.DEPARTMENT_ID = d.DEPARTMENT_ID
+               )
+            ) AS ABOVE_DEPT_AVG_CNT
+        FROM DEPARTMENTS d
+        LEFT JOIN EMPLOYEES e
+          ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+        WHERE d.DEPARTMENT_ID >= #{p_department_id_min}
+        GROUP BY d.DEPARTMENT_ID, d.DEPARTMENT_NAME
+    ) x
+    WHERE x.DEPARTMENT_ID NOT IN (
+        SELECT e4.DEPARTMENT_ID
+        FROM EMPLOYEES e4
+        WHERE e4.COMMISSION_PCT IS NULL
+    )
+    ]]>
+  </select>
+
+  <select id="level24">
+    <![CDATA[
+    SELECT
+        *
+    FROM (
+        SELECT
+            t1.*,
+            ROWNUM AS RN
+        FROM (
+            SELECT
+                e.EMPLOYEE_ID,
+                e.HIRE_DATE,
+                e.JOB_ID,
+                e.DEPARTMENT_ID,
+                e.SALARY
+            FROM EMPLOYEES e
+            WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+              AND e.EMPLOYEE_ID IN (
+                  SELECT
+                      e2.EMPLOYEE_ID
+                  FROM EMPLOYEES e2
+                  WHERE e2.DEPARTMENT_ID = e.DEPARTMENT_ID
+              )
+        ) t1
+        WHERE ROWNUM <= 10
+    )
+    WHERE RN > 3
+    ]]>
+  </select>
+
+  <select id="level25">
+    <![CDATA[
+    SELECT
+        a.EMPLOYEE_ID,
+        TO_CHAR(TO_CHAR(a.HIRE_DATE, 'YYYYMMDD')) AS HIRE_DATE_TXT,
+        TO_NUMBER(TO_CHAR(a.SALARY)) AS SALARY_NUM,
+        TO_CHAR(TO_CHAR(a.JOB_ID)) AS JOB_ID_TXT,
+        TO_CHAR(TO_CHAR(a.DEPARTMENT_ID)) AS DEPARTMENT_ID_TXT
+    FROM (
+        SELECT
+            e.EMPLOYEE_ID,
+            e.HIRE_DATE,
+            e.SALARY,
+            e.JOB_ID,
+            e.DEPARTMENT_ID
+        FROM EMPLOYEES e
+        WHERE TO_CHAR(e.EMPLOYEE_ID) = #{p_emp_id_txt}
+           OR TO_CHAR(e.EMPLOYEE_ID) = #{p_emp_id_txt}
+    ) a
+    ]]>
+  </select>
+
+  <select id="level26">
+    <![CDATA[
+    SELECT
+        *
+    FROM (
+        SELECT
+            *
+        FROM (
+            SELECT
+                e.EMPLOYEE_ID,
+                e.FIRST_NAME,
+                e.LAST_NAME,
+                e.SALARY,
+                e.DEPARTMENT_ID
+            FROM EMPLOYEES e
+            WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+        ) inner_emp
+        ORDER BY inner_emp.SALARY DESC
+    ) outer_emp
+    WHERE outer_emp.SALARY >= #{p_min_salary}
+    ]]>
+  </select>
+
+  <select id="level27">
+    <![CDATA[
+    SELECT
+        DISTINCT
+        e.EMPLOYEE_ID,
+        e.FIRST_NAME || ' ' || e.LAST_NAME || '-' || d.DEPARTMENT_NAME AS EMP_LABEL,
+        j.JOB_TITLE,
+        e.SALARY
+    FROM EMPLOYEES e
+    JOIN DEPARTMENTS d
+      ON d.DEPARTMENT_ID = e.DEPARTMENT_ID
+    JOIN JOBS j
+      ON j.JOB_ID = e.JOB_ID
+    WHERE e.EMPLOYEE_ID >= #{p_emp_id_min}
+      AND (e.FIRST_NAME || e.LAST_NAME || d.DEPARTMENT_NAME) LIKE #{p_name_keyword}
+    ]]>
+  </select>
+
+  <select id="level28">
+    <![CDATA[
+    SELECT
+        e.EMPLOYEE_ID,
+        e.FIRST_NAME,
+        e.LAST_NAME,
+        e.SALARY,
+        d.DEPARTMENT_NAME,
+        j.JOB_TITLE
+    FROM EMPLOYEES e
+    JOIN DEPARTMENTS d
+      ON d.DEPARTMENT_ID = e.DEPARTMENT_ID
+    JOIN JOBS j
+      ON j.JOB_ID = e.JOB_ID
+    WHERE TO_CHAR(e.HIRE_DATE, 'YYYYMMDD') = #{p_hire_date_txt}
+      AND TO_CHAR(e.HIRE_DATE, 'YYYYMMDD') = #{p_hire_date_txt}
+      AND TO_CHAR(e.SALARY) = #{p_salary_txt}
+    ]]>
+  </select>
+
+  <select id="level29">
+    <![CDATA[
+    SELECT
+        *
+    FROM (
+        SELECT
+            d.DEPARTMENT_ID,
+            d.DEPARTMENT_NAME,
+            COUNT(e.EMPLOYEE_ID) AS EMP_COUNT,
+            AVG(e.SALARY) AS AVG_SALARY
+        FROM DEPARTMENTS d, EMPLOYEES e
+        WHERE d.DEPARTMENT_ID >= #{p_department_id_min}
+          AND e.SALARY >= #{p_min_salary}
+        GROUP BY d.DEPARTMENT_ID, d.DEPARTMENT_NAME
+    ) bad_cross
+    WHERE bad_cross.EMP_COUNT >= 0
+    ]]>
+  </select>
+
+  <select id="level30">
+    <![CDATA[
+    SELECT
+        paged_bad.*
+    FROM (
+        SELECT
+            final_bad.*,
+            ROWNUM AS RN
+        FROM (
+            SELECT DISTINCT
+                s.DEPARTMENT_ID,
+                s.DEPARTMENT_NAME,
+                s.EMPLOYEE_ID,
+                s.JOB_ID,
+                s.SALARY,
+                (SELECT COUNT(*)
+                 FROM JOB_HISTORY jh
+                 WHERE jh.EMPLOYEE_ID = s.EMPLOYEE_ID
+                   AND jh.JOB_ID = s.JOB_ID
+                ) AS JOB_HISTORY_CNT
+            FROM (
+                SELECT
+                    d.DEPARTMENT_ID,
+                    d.DEPARTMENT_NAME,
+                    e.EMPLOYEE_ID,
+                    e.JOB_ID,
+                    e.SALARY
+                FROM DEPARTMENTS d
+                LEFT JOIN EMPLOYEES e
+                  ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+                WHERE d.DEPARTMENT_ID >= #{p_department_id_min}
+                  AND (TO_CHAR(d.DEPARTMENT_ID) || '-' || TO_CHAR(e.EMPLOYEE_ID)) LIKE #{p_concat_key}
+            ) s
+        ) final_bad
+        WHERE ROWNUM <= 20
+    ) paged_bad
+    ]]>
+  </select>
+
+</mapper>

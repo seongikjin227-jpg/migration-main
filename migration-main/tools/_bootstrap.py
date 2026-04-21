@@ -1,3 +1,5 @@
+"""Make the project root importable for standalone tool scripts."""
+
 from pathlib import Path
 import sys
 

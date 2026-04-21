@@ -1,0 +1,35 @@
+You are reranking reference SQL migration cases for a TOBE SQL generation task.
+
+Goal:
+- Rank the candidate cases by how useful they are for solving the current SQL migration problem.
+- Prioritize structural similarity, migration-rule similarity, target table relevance, and dynamic SQL similarity.
+- Do not prefer a candidate just because it looks lexically similar.
+- Focus on which case is most likely to help produce a correct TOBE SQL.
+
+Input:
+- current_query_summary:
+{current_query_summary}
+- candidate_cases_json:
+{candidate_cases_json}
+
+Output rules:
+- Return JSON only.
+- Do not include markdown.
+- Do not include explanations outside the JSON.
+- Return this shape:
+{{
+  "ranked_case_ids": ["case_id_1", "case_id_2", "case_id_3"],
+  "reasons": {{
+    "case_id_1": "short reason",
+    "case_id_2": "short reason"
+  }}
+}}
+
+Ranking criteria:
+1. Same or highly similar migration rules
+2. Similar SQL shape and clause structure
+3. Similar target table usage
+4. Similar MyBatis dynamic SQL shape
+5. Similar pagination or join rewrite behavior
+
+Only rank the provided candidates.

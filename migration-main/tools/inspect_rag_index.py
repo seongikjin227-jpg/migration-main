@@ -1,3 +1,5 @@
+"""Inspect the local SQLite feedback RAG index from the command line."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,6 +12,7 @@ from _bootstrap import ROOT_DIR  # noqa: F401
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser for the index-inspection utility."""
     parser = argparse.ArgumentParser(description="Inspect feedback RAG vector index in SQLite.")
     parser.add_argument("--db-path", default=os.getenv("RAG_VECTOR_DB_PATH", str(ROOT_DIR / "migration.db")))
     parser.add_argument("--table", default=os.getenv("RAG_VECTOR_TABLE", "feedback_rag_index"))
@@ -19,11 +22,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _safe_count(conn: sqlite3.Connection, table: str) -> int:
+    """Return the number of rows currently stored in the target table."""
     row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
     return int(row[0] or 0)
 
 
 def _parse_dim(embedding_json: str) -> int:
+    """Read the vector dimension from a JSON-encoded embedding."""
     try:
         vec = json.loads(embedding_json)
         if isinstance(vec, list):
@@ -34,6 +39,7 @@ def _parse_dim(embedding_json: str) -> int:
 
 
 def _parse_head(embedding_json: str, n: int = 8) -> str:
+    """Return a compact preview of the first `n` vector values."""
     try:
         vec = json.loads(embedding_json)
         if isinstance(vec, list):
@@ -44,6 +50,7 @@ def _parse_head(embedding_json: str, n: int = 8) -> str:
 
 
 def main() -> None:
+    """CLI entry point that prints summary rows from the vector index."""
     args = _build_parser().parse_args()
     db_path = Path(args.db_path)
     if not db_path.exists():

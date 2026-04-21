@@ -33,6 +33,8 @@ _SQL_XML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
 @dataclass
 class ParsedSqlItem:
+    """Parsed SQL fragment extracted from one mapper XML node."""
+
     tag_kind: str
     space_nm: str
     sql_id: str
@@ -51,6 +53,7 @@ class ParsedSqlItem:
         }
 
 
+# Safely coerce DB or JSON values into text.
 def _to_text(value: Any, default: str = "") -> str:
     """DB/JSON 값을 안전하게 문자열로 정규화한다."""
     if value is None:
@@ -64,6 +67,7 @@ def _to_text(value: Any, default: str = "") -> str:
     return str(value)
 
 
+# Read a required environment variable or raise immediately.
 def _require_env(name: str) -> str:
     """필수 환경변수를 읽고 누락 시 즉시 예외를 발생시킨다."""
     value = os.getenv(name, "").strip()
@@ -72,6 +76,7 @@ def _require_env(name: str) -> str:
     return value
 
 
+# Convert free-form text into a filesystem-safe filename component.
 def _safe_filename_component(text: str) -> str:
     """상대 경로를 파일시스템 안전한 파일명으로 변환한다."""
     return re.sub(r'[<>:"/\\|?*]+', "_", text.strip()) or "_"
@@ -84,6 +89,7 @@ def _local_tag_name(tag_name: str) -> str:
     return tag_name.lower()
 
 
+# Extract the inner XML text of one element, including child tags.
 def _inner_xml(element: ET.Element) -> str:
     """자식 태그/테일을 포함한 inner XML 문자열을 추출한다."""
     parts: list[str] = []
@@ -96,6 +102,7 @@ def _inner_xml(element: ET.Element) -> str:
     return "".join(parts).strip()
 
 
+# Normalize a free-form table token into uppercase table notation.
 def _normalize_table_name(token: str) -> str:
     """자유형식 문자열/JSON에서 테이블명을 정규화해 대문자로 반환한다."""
     value = token.strip()
@@ -118,6 +125,7 @@ def _normalize_table_name(token: str) -> str:
     return value.upper()
 
 
+# Parse one mapper XML file into `ParsedSqlItem` objects.
 def parse_single_mapper_xml(xml_path: Path) -> list[ParsedSqlItem]:
     """mapper XML 1개를 파싱해 ParsedSqlItem 목록으로 반환한다."""
     try:
@@ -157,6 +165,7 @@ def parse_single_mapper_xml(xml_path: Path) -> list[ParsedSqlItem]:
     return parsed_items
 
 
+# Resolve and create the stage-1 JSON output directory.
 def _resolve_output_dir(output_dir: str | None = None) -> Path:
     """출력 디렉터리를 인자/환경변수/기본값 순서로 결정하고 생성한다."""
     if output_dir:
@@ -168,6 +177,7 @@ def _resolve_output_dir(output_dir: str | None = None) -> Path:
     return resolved
 
 
+# Remove previous stage-1 JSON files before regenerating them.
 def _cleanup_output_json_files(output_dir: Path) -> int:
     """stage1 재생성 전에 기존 JSON 산출물을 정리한다."""
     removed = 0
@@ -180,6 +190,7 @@ def _cleanup_output_json_files(output_dir: Path) -> int:
     return removed
 
 
+# Parse target tables from the ACTIVE table's C/R/U/D columns.
 def _parse_target_tables_from_active_columns(*values: Any) -> list[str]:
     """ACTIVE 테이블의 C/R/U/D 컬럼 문자열에서 테이블 목록을 파싱한다."""
     results: list[str] = []
@@ -220,9 +231,14 @@ def _parse_target_tables_from_active_columns(*values: Any) -> list[str]:
     return results
 
 
+# Load `namespace.sql_id -> [target tables]` from the ACTIVE table.
 def _load_target_table_map_from_active_table() -> dict[str, list[str]]:
     """ACTIVE SQL ID 테이블에서 full_id -> target_table[] 맵을 읽는다."""
-    active_table = _validate_sql_identifier(_require_env("ACTIVE_SQL_ID_TABLE"))
+    active_table_raw = os.getenv("ACTIVE_SQL_ID_TABLE", "").strip()
+    if not active_table_raw:
+        logger.info("[XMLParser] ACTIVE_SQL_ID_TABLE is empty; target-table auto mapping will be skipped.")
+        return {}
+    active_table = _validate_sql_identifier(active_table_raw)
     active_column = _validate_sql_identifier(os.getenv("ACTIVE_SQL_ID_COLUMN", "SQL_ID"))
 
     query = f"""
@@ -263,6 +279,7 @@ def _load_target_table_map_from_active_table() -> dict[str, list[str]]:
     return mapped
 
 
+# Stage 1: parse mapper XML files and write JSON payload files.
 def parse_mapper_dir_to_json(
     source_dir: str | None = None,
     output_dir: str | None = None,
@@ -275,7 +292,6 @@ def parse_mapper_dir_to_json(
     out_dir = _resolve_output_dir(output_dir)
     removed_json = _cleanup_output_json_files(out_dir)
     xml_files = sorted(source_path.rglob("*.xml"))
-    target_table_map = _load_target_table_map_from_active_table()
     logger.info(
         f"[XMLParser] Stage1 started (source={source_path}, files={len(xml_files)}, removed_old_json={removed_json})"
     )
@@ -290,8 +306,7 @@ def parse_mapper_dir_to_json(
         json_rows: list[dict[str, Any]] = []
         for item in items:
             total_items += 1
-            full_id = f"{item.space_nm}.{item.sql_id}".upper()
-            item.target_table = target_table_map.get(full_id, [])
+            item.target_table = []
             json_rows.append(item.to_json_payload())
 
         rel_path = xml_file.relative_to(source_path).as_posix()
@@ -314,6 +329,7 @@ def parse_mapper_dir_to_json(
     }
 
 
+# Load flattened payload rows from the stage-1 JSON output directory.
 def _load_json_payloads(data_dir: str | None = None) -> list[dict[str, Any]]:
     """stage1 JSON 파일들을 평탄화된 payload 목록으로 로드한다."""
     root = _resolve_output_dir(data_dir)
@@ -335,12 +351,14 @@ def _load_json_payloads(data_dir: str | None = None) -> list[dict[str, Any]]:
     return payloads
 
 
+# Count stage-1 JSON files in the given data directory.
 def _count_json_files(data_dir: str | None = None) -> int:
     """stage 로깅용 JSON 파일 개수를 반환한다."""
     root = _resolve_output_dir(data_dir)
     return len(list(root.glob("*.json")))
 
 
+# Stage 2: MERGE stage-1 payload rows into `NEXT_SQL_INFO`.
 def upsert_json_to_next_sql_info(data_dir: str | None = None) -> dict[str, int]:
     """Stage2: stage1 payload를 NEXT_SQL_INFO에 MERGE upsert 한다."""
     table = get_result_table()
@@ -426,6 +444,7 @@ def upsert_json_to_next_sql_info(data_dir: str | None = None) -> dict[str, int]:
     return {"json_files": json_file_count, "payloads": len(payloads), "upserted": upserted}
 
 
+# Split an include `refid` into `(namespace, sql_id)` form.
 def _parse_refid(refid: str, current_space: str) -> tuple[str, str]:
     """include refid를 (namespace, sql_id) 형태로 해석한다."""
     clean_refid = (refid or "").strip()
@@ -442,6 +461,7 @@ def _parse_refid(refid: str, current_space: str) -> tuple[str, str]:
     return current_space, clean_refid
 
 
+# Recursively resolve `<include refid>` nodes with cycle protection.
 def _resolve_include_text(
     sql_text: str,
     current_space: str,
@@ -496,6 +516,7 @@ def _resolve_include_text(
     return resolved
 
 
+# Stage 3: expand include fragments and store them in `EDIT_FR_SQL`.
 def expand_include_to_edit_sql() -> dict[str, int]:
     """Stage3: include 확장 SQL을 EDIT_FR_SQL에 저장한다."""
     table = get_result_table()
@@ -573,6 +594,7 @@ def expand_include_to_edit_sql() -> dict[str, int]:
     return {"include_candidates": include_candidates, "updated": len(updates)}
 
 
+# Allow only safe SQL identifier characters for dynamic SQL fragments.
 def _validate_sql_identifier(name: str) -> str:
     """유틸 SQL에서 식별자 인젝션을 막기 위해 허용 문자만 통과시킨다."""
     normalized = (name or "").strip()
@@ -583,6 +605,7 @@ def _validate_sql_identifier(name: str) -> str:
     return normalized
 
 
+# Restore target tables from stored JSON or CSV-like text.
 def _parse_stored_target_table(value: Any) -> list[str]:
     """TARGET_TABLE(JSON 배열/CSV 문자열)를 테이블 목록으로 복원한다."""
     text = _to_text(value).strip()
@@ -608,6 +631,7 @@ def _parse_stored_target_table(value: Any) -> list[str]:
     return items
 
 
+# Strip comments, literals, XML tags, and placeholders before table parsing.
 def _strip_sql_for_table_parse(sql_text: str) -> str:
     """테이블명 파싱 전 주석/리터럴/MyBatis 토큰/XML 태그를 제거한다."""
     text = _to_text(sql_text)
@@ -619,6 +643,7 @@ def _strip_sql_for_table_parse(sql_text: str) -> str:
     return text
 
 
+# Return the index after the matching `)` for a given `(` position.
 def _skip_balanced_parentheses(text: str, start_idx: int) -> int:
     """`(` 위치에서 시작해 짝이 맞는 `)` 다음 인덱스를 반환한다."""
     if start_idx >= len(text) or text[start_idx] != "(":
@@ -652,6 +677,7 @@ def _skip_balanced_parentheses(text: str, start_idx: int) -> int:
     return idx
 
 
+# Read one SQL identifier such as `SCHEMA.TABLE` or `"TABLE"`.
 def _read_sql_identifier(text: str, start_idx: int) -> tuple[str, int]:
     """`SCHEMA.TABLE` 또는 `"TABLE"` 형태 식별자를 읽는다."""
     idx = start_idx
@@ -688,6 +714,7 @@ def _read_sql_identifier(text: str, start_idx: int) -> tuple[str, int]:
     return "".join(parts), idx
 
 
+# Extract CTE names declared in a leading WITH clause.
 def _extract_cte_names(sql_text: str) -> set[str]:
     """WITH 절에 선언된 CTE 이름을 추출한다."""
     upper = sql_text.upper().lstrip()
@@ -730,6 +757,7 @@ def _extract_cte_names(sql_text: str) -> set[str]:
     return cte_names
 
 
+# Extract table names from FROM clauses, including comma joins.
 def _extract_from_clause_tables(sql_text: str) -> list[str]:
     """FROM 절의 comma join 패턴을 포함해 테이블명을 추출한다."""
     tables: list[str] = []
@@ -793,6 +821,7 @@ def _extract_from_clause_tables(sql_text: str) -> list[str]:
     return tables
 
 
+# Infer target-table candidates directly from SQL text.
 def _extract_target_tables_from_sql(sql_text: str) -> list[str]:
     """SQL에서 target table 후보를 추출한다. EDIT_FR_SQL 우선 입력을 권장한다."""
     cleaned = _strip_sql_for_table_parse(sql_text)
@@ -828,6 +857,7 @@ def _extract_target_tables_from_sql(sql_text: str) -> list[str]:
     return candidates
 
 
+# Load `TEST_MAPPING_TABLES` from env in text or JSON-array form.
 def _load_test_mapping_tables_from_env() -> set[str]:
     """
     Load test mapping tables from env var TEST_MAPPING_TABLES.
@@ -835,7 +865,9 @@ def _load_test_mapping_tables_from_env() -> set[str]:
     - comma/space/semicolon/pipe delimited string
     - JSON array string
     """
-    raw = _require_env("TEST_MAPPING_TABLES")
+    raw = os.getenv("TEST_MAPPING_TABLES", "").strip()
+    if not raw:
+        return set()
     tokens: list[str] = []
     try:
         parsed = json.loads(raw)
@@ -854,22 +886,33 @@ def _load_test_mapping_tables_from_env() -> set[str]:
         mapped.add(normalized)
         if "." in normalized:
             mapped.add(normalized.split(".")[-1])
-    if not mapped:
+    if raw and not mapped:
         raise ValueError("TEST_MAPPING_TABLES is set but no valid table name was parsed.")
     return mapped
 
 
+# Stage 4: remove rows outside the active scope or test-mapping scope.
 def cleanup_next_sql_info_rows() -> dict[str, int]:
     """Stage4: 비활성/테스트매핑 범위 밖 행을 정리한다."""
     result_table = get_result_table()
-    active_table = _validate_sql_identifier(_require_env("ACTIVE_SQL_ID_TABLE"))
+    active_table_raw = os.getenv("ACTIVE_SQL_ID_TABLE", "").strip()
+    if not active_table_raw:
+        logger.info("[XMLParser] Stage4 skipped because ACTIVE_SQL_ID_TABLE is empty.")
+        return {
+            "updated_target_table": 0,
+            "deleted_total": 0,
+            "deleted_not_active": 0,
+            "deleted_not_in_test_mapping": 0,
+            "remaining_total": 0,
+            "skipped": 1,
+        }
+    active_table = _validate_sql_identifier(active_table_raw)
     active_column = _validate_sql_identifier(os.getenv("ACTIVE_SQL_ID_COLUMN", "SQL_ID"))
-    test_mapping_tables = _load_test_mapping_tables_from_env()
 
     logger.info(
         "[XMLParser] Stage4 started "
         f"(active_table={active_table}, active_column={active_column}, "
-        f"test_mapping_tables={len(test_mapping_tables)})"
+        "target_table_source=EDIT_FR_SQL|FR_SQL_TEXT)"
     )
 
     # ACTIVE 테이블은 반드시 full id(NAMESPACE.SQL_ID) 형식을 사용해야 한다.
@@ -922,7 +965,6 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
     to_delete_rowids: list[str] = []
     target_table_updates: list[tuple[str, str]] = []
     deleted_not_active = 0
-    deleted_not_in_test_mapping = 0
     updated_target_table = 0
 
     for rowid, space_nm, sql_id, target_table_value, fr_sql_text, edit_fr_sql in rows:
@@ -934,33 +976,15 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
             deleted_not_active += 1
             continue
 
-        stored_target_tables = _parse_stored_target_table(target_table_value)
         base_sql = (edit_fr_sql.strip() or fr_sql_text)
         parsed_target_tables = _extract_target_tables_from_sql(base_sql)
-        target_tables = parsed_target_tables if parsed_target_tables else stored_target_tables
+        target_tables = parsed_target_tables
 
         serialized_target_table = json.dumps(target_tables, ensure_ascii=False) if target_tables else ""
         current_serialized = target_table_value.strip()
         if serialized_target_table != current_serialized:
             target_table_updates.append((serialized_target_table, rowid))
             updated_target_table += 1
-
-        if not target_tables:
-            to_delete_rowids.append(rowid)
-            deleted_not_in_test_mapping += 1
-            continue
-
-        all_mapped = True
-        for target_table in target_tables:
-            table_key = target_table.upper()
-            table_short = table_key.split(".")[-1]
-            if table_key not in test_mapping_tables and table_short not in test_mapping_tables:
-                all_mapped = False
-                break
-
-        if not all_mapped:
-            to_delete_rowids.append(rowid)
-            deleted_not_in_test_mapping += 1
 
     if target_table_updates:
         with get_connection() as conn:
@@ -996,18 +1020,19 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
         f"(updated_target_table={updated_target_table}, "
         f"deleted_total={len(to_delete_rowids)}, "
         f"deleted_not_active={deleted_not_active}, "
-        f"deleted_not_in_test_mapping={deleted_not_in_test_mapping}, "
+        "deleted_not_in_test_mapping=0, "
         f"remaining_total={remaining_total})"
     )
     return {
         "updated_target_table": updated_target_table,
         "deleted_total": len(to_delete_rowids),
         "deleted_not_active": deleted_not_active,
-        "deleted_not_in_test_mapping": deleted_not_in_test_mapping,
+        "deleted_not_in_test_mapping": 0,
         "remaining_total": remaining_total,
     }
 
 
+# Run all XML parser stages sequentially and return their summaries.
 def run_all_xml_parser_stages(
     source_dir: str | None = None,
     output_dir: str | None = None,
@@ -1025,6 +1050,7 @@ def run_all_xml_parser_stages(
     }
 
 
+# Build the CLI parser for selecting one XML parser stage.
 def _build_arg_parser() -> argparse.ArgumentParser:
     """단일 stage 또는 all 실행용 CLI 인자 파서를 만든다."""
     parser = argparse.ArgumentParser(description="MyBatis XML parser utility stages")
@@ -1038,6 +1064,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# CLI entry point for the XML parser utility.
 def _main():
     """XML parser 유틸 CLI 진입점."""
     parser = _build_arg_parser()

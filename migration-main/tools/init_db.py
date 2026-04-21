@@ -1,3 +1,5 @@
+"""Startup health-check utility for Oracle, LLM, and embedding dependencies."""
+
 from __future__ import annotations
 
 import json
@@ -19,16 +21,20 @@ from app.common import logger
 
 @dataclass
 class HealthResult:
+    """Single connectivity check result printed by the setup utility."""
+
     name: str
     ok: bool
     detail: str
 
 
 def _join_url(base_url: str, suffix: str) -> str:
+    """Join a base URL and suffix without duplicating or dropping slashes."""
     return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"
 
 
 def _normalize_anthropic_base_url(raw_base_url: str) -> str:
+    """Normalize Anthropic-compatible endpoints down to the API root."""
     normalized = raw_base_url.strip().rstrip("/")
     if normalized.endswith("/v1/message"):
         return normalized[: -len("/v1/message")]
@@ -40,6 +46,7 @@ def _normalize_anthropic_base_url(raw_base_url: str) -> str:
 
 
 def _normalize_openai_base_url(raw_base_url: str) -> str:
+    """Normalize OpenAI-compatible endpoints down to the API root."""
     normalized = raw_base_url.strip().rstrip("/")
     for suffix in ("/chat/completions", "/responses", "/completions", "/models"):
         if normalized.endswith(suffix):
@@ -48,6 +55,7 @@ def _normalize_openai_base_url(raw_base_url: str) -> str:
 
 
 def _extract_embedding_vectors(body: Any) -> list[list[float]]:
+    """Parse vectors from common embedding API response formats."""
     if isinstance(body, dict):
         data = body.get("data")
         if isinstance(data, list):
@@ -75,6 +83,7 @@ def _extract_embedding_vectors(body: Any) -> list[list[float]]:
 
 
 def check_oracle_connection() -> HealthResult:
+    """Verify Oracle connectivity and required table access."""
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -104,6 +113,7 @@ def check_oracle_connection() -> HealthResult:
 
 
 def check_llm_connection(timeout_sec: int = 15) -> HealthResult:
+    """Verify that the configured LLM endpoint is reachable and authenticated."""
     provider = os.getenv("LLM_PROVIDER", "").strip().lower()
     base_url = os.getenv("LLM_BASE_URL", "").strip()
     api_key = os.getenv("LLM_API_KEY", "").strip()
@@ -157,6 +167,7 @@ def check_llm_connection(timeout_sec: int = 15) -> HealthResult:
 
 
 def check_embedding_connection(timeout_sec: int = 20) -> HealthResult:
+    """Verify that the configured embedding endpoint returns usable vectors."""
     base_url = os.getenv("RAG_EMBED_BASE_URL", "").strip()
     api_key = os.getenv("RAG_EMBED_API_KEY", "").strip()
     model = os.getenv("RAG_EMBED_MODEL", "BAAI/bge-m3").strip()
@@ -195,6 +206,7 @@ def check_embedding_connection(timeout_sec: int = 20) -> HealthResult:
 
 
 def run_health_checks() -> list[HealthResult]:
+    """Run all startup health checks in a fixed order."""
     return [
         check_oracle_connection(),
         check_llm_connection(),
@@ -203,6 +215,7 @@ def run_health_checks() -> list[HealthResult]:
 
 
 def main() -> None:
+    """CLI entry point for environment and connectivity validation."""
     results = run_health_checks()
     logger.info("========== Connection Health Check ==========")
     all_ok = True

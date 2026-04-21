@@ -7,6 +7,7 @@ from typing import Optional
 
 
 def _setup_logger() -> logging.Logger:
+    """Create the process-wide application logger used by the batch runtime."""
     logger = logging.getLogger("migration_agent")
     if not logger.handlers:
         logger.setLevel(logging.DEBUG)
@@ -25,19 +26,20 @@ _STOP_EVENT = threading.Event()
 
 
 class AgentBaseException(Exception):
-    """Agent ?? ??? ??? ??."""
+    """Base exception for domain-specific migration agent errors."""
 
 
 class LLMRateLimitError(AgentBaseException):
-    """LLM ?? ??(429/timeout ?)? ??? ??? ??."""
+    """Raised when the LLM provider fails with retryable throttling/timeout issues."""
 
 
 class DBSqlError(AgentBaseException):
-    """DB SQL ?? ??(??/??/?? ?) ??."""
+    """Raised when generated or executed SQL is invalid for runtime execution."""
 
 
 @dataclass
 class SqlInfoJob:
+    """One pending row loaded from NEXT_SQL_INFO."""
     row_id: str
     tag_kind: str
     space_nm: str
@@ -49,6 +51,9 @@ class SqlInfoJob:
     bind_sql: Optional[str] = None
     bind_set: Optional[str] = None
     test_sql: Optional[str] = None
+    good_sql: Optional[str] = None
+    good_test_sql: Optional[str] = None
+    tuning_status: Optional[str] = None
     status: Optional[str] = None
     log_text: Optional[str] = None
     upd_ts: Optional[datetime] = None
@@ -59,26 +64,32 @@ class SqlInfoJob:
 
     @property
     def source_sql(self) -> str:
+        """Return the effective source SQL, preferring edited SQL when present."""
         edited = (self.edit_fr_sql or "").strip()
         return edited if edited else (self.fr_sql_text or "")
 
 
 @dataclass
 class MappingRuleItem:
+    """One mapping-rule row used to guide TOBE generation and logging."""
     map_type: str
     fr_table: str
     fr_col: str
     to_table: str
     to_col: str
+    map_id: Optional[str] = None
 
 
 def request_stop() -> None:
+    """Signal the runtime that current and future cycles should stop."""
     _STOP_EVENT.set()
 
 
 def clear_stop() -> None:
+    """Clear the global stop flag before normal scheduler operation begins."""
     _STOP_EVENT.clear()
 
 
 def is_stop_requested() -> bool:
+    """Return whether a graceful shutdown has been requested."""
     return _STOP_EVENT.is_set()

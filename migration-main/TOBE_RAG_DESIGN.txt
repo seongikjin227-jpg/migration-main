@@ -1,0 +1,865 @@
+# TOBE RAG 재구축 설계서 v1
+
+## 1. 목표
+
+이 문서는 TOBE stage 전용 RAG 시스템을 1차로 재구축하기 위한 구현 설계서다.
+
+이번 RAG의 목적은 단순히 비슷한 SQL 문자열을 찾는 것이 아니다.
+현재 변환해야 하는 SQL에 대해 구조적으로 유사한 마이그레이션 사례를 찾아서 TOBE SQL 생성 품질을 높이는 것이 목적이다.
+
+따라서 이 시스템은 다음을 우선한다.
+
+- TOBE stage 전용 검색
+- raw SQL 중심이 아니라 case 기반 저장
+- `sqlglot` 기반 parser 중심 인덱싱
+- 메타 필터, dense retrieval, sparse retrieval, LLM rerank를 결합한 hybrid retrieval
+- 프롬프트에 full SQL 대신 compact summary 중심 주입
+
+1차 버전은 정확도만 극단적으로 추구하기보다 운영 단순성과 점진 개선을 우선한다.
+
+## 2. 범위
+
+v1에 포함되는 것:
+
+- TOBE stage만 대상
+- corpus는 `TOBE_CORRECT_SQL` 기반
+- 운영 호환을 위해 legacy `CORRECT_SQL` fallback 허용
+- parser 성공 케이스만 인덱싱
+- `sqlglot` 기반 파싱
+- Faiss 기반 dense retrieval
+- BM25 기반 sparse retrieval
+- 기존 LLM endpoint를 재사용한 rerank
+- full SQL 대신 요약, 규칙, 변경 근거 중심 prompt example
+
+v1에서 제외하는 것:
+
+- BIND-stage RAG
+- TEST-stage RAG
+- business domain 추론
+- validation quality 가중치
+- acceptance rate, reuse count 같은 품질 신호
+- block/snippet 단위 계층형 retrieval
+
+## 3. 핵심 결정사항
+
+v1에서 아래 결정은 고정한다.
+
+- 기존 `feedback_rag_service.py`는 새 TOBE RAG가 붙은 뒤 제거한다.
+- 온라인 query 파싱 실패 시 RAG만 스킵하고 TOBE 생성은 계속 진행한다.
+- parser는 `sqlglot`을 사용한다.
+- dense vector index는 처음부터 Faiss를 사용한다.
+- Faiss index는 `migration.db` 옆의 별도 파일로 저장한다.
+- sparse retrieval은 `rank-bm25` 같은 단순 Python BM25 구현을 사용한다.
+- MyBatis 전처리는 아래까지만 지원한다.
+  - `<if>`
+  - `<choose>`
+  - `<foreach>`
+  - `#{...}`
+  - `${...}`
+- corpus는 `TOBE_CORRECT_SQL`을 우선 사용하고, 필요 시 legacy `CORRECT_SQL`로 fallback 한다.
+- 인덱스 동기화는 기본적으로 증분 upsert 방식으로 하고, 전체 rebuild 옵션은 별도로 제공한다.
+- prompt example에는 full SQL을 거의 넣지 않고 compact summary 위주로 구성한다.
+
+## 4. 기존 RAG를 교체하는 이유
+
+현재 feedback RAG는 대략 아래 구조다.
+
+- case당 임베딩 문서 1개
+- JSON payload 자체를 임베딩
+- cosine similarity 중심 검색
+- 단순 pattern-tag overlap 보너스
+
+이 구조는 목표로 하는 새 RAG와 추상화 레벨이 다르다.
+
+새 구조는 최소한 아래가 필요하다.
+
+- parser 기반 정규화
+- 구조 feature 추출
+- rule tag 추출
+- case당 다중 임베딩 문서
+- metadata filter
+- hybrid retrieval
+- LLM rerank
+
+즉 기존 TOBE RAG 경로를 덧대기보다 TOBE 전용 경로를 새로 만드는 것이 더 깔끔하다.
+
+## 5. 아키텍처 개요
+
+시스템은 크게 두 파이프라인으로 나뉜다.
+
+### 5.1 오프라인 인덱싱 파이프라인
+
+1. Oracle에서 TOBE RAG corpus row를 읽는다.
+2. `correct_sql`이 있는 row만 남긴다.
+3. MyBatis 구문을 전처리한다.
+4. `sqlglot`으로 SQL을 파싱한다.
+5. parser 실패 row는 제외한다.
+6. SQL을 정규화한다.
+7. 구조 feature를 추출한다.
+8. migration rule tag를 추출한다.
+9. case metadata를 만든다.
+10. multi-view embedding 문서를 만든다.
+11. 기존 embedding API로 embedding을 생성한다.
+12. SQLite에 metadata를 upsert 한다.
+13. Faiss에 dense vector를 upsert 한다.
+14. BM25용 sparse token cache를 갱신한다.
+
+### 5.2 온라인 검색 파이프라인
+
+1. 현재 ASIS SQL job을 입력받는다.
+2. MyBatis 구문을 전처리한다.
+3. `sqlglot`으로 파싱한다.
+4. 파싱 실패 시 RAG 결과 없이 종료한다.
+5. SQL을 정규화한다.
+6. 구조 feature와 rule tag를 추출한다.
+7. query용 retrieval 문서를 만든다.
+8. metadata filter를 적용한다.
+9. Faiss에서 dense retrieval을 수행한다.
+10. BM25에서 sparse retrieval을 수행한다.
+11. 후보를 case 단위로 병합한다.
+12. pre-rerank 점수를 계산한다.
+13. 상위 후보를 LLM으로 rerank 한다.
+14. prompt에 넣을 최종 reference case를 반환한다.
+
+## 6. 파일 구조
+
+### 6.1 새 서비스 파일
+
+- `app/services/rag/tobe_rag_models.py`
+- `app/services/rag/tobe_rag_indexer.py`
+- `app/services/rag/tobe_rag_service.py`
+
+### 6.2 새 툴 파일
+
+- `tools/sync_tobe_rag.py`
+- `tools/inspect_tobe_rag.py`
+
+1차는 의도적으로 파일 수를 최소화한다.
+구조가 안정되면 extractor, reranker 등을 이후 단계에서 더 분리할 수 있다.
+
+## 7. 환경변수
+
+`.env.example`에 아래 항목을 추가하는 것을 권장한다.
+
+```env
+TOBE_RAG_DB_PATH=migration.db
+TOBE_RAG_FAISS_INDEX_PATH=migration_tobe_rag.faiss
+TOBE_RAG_TABLE_CASE_MASTER=rag_case_master
+TOBE_RAG_TABLE_CASE_DOC=rag_case_doc
+TOBE_RAG_TOP_K_DENSE=12
+TOBE_RAG_TOP_K_SPARSE=12
+TOBE_RAG_TOP_K_RERANK=8
+TOBE_RAG_TOP_K_PROMPT=4
+TOBE_RAG_CORPUS_LIMIT=2000
+TOBE_RAG_ENABLE_LEGACY_CORRECT_FALLBACK=Y
+TOBE_RAG_PARSER_DIALECT=oracle
+```
+
+기존 embedding 설정은 그대로 재사용한다.
+
+- `RAG_EMBED_BASE_URL`
+- `RAG_EMBED_MODEL`
+- `RAG_EMBED_API_KEY`
+- `RAG_EMBED_TIMEOUT_SEC`
+
+rerank용 LLM도 기존 provider 및 endpoint를 그대로 사용한다.
+
+## 8. 저장 구조
+
+metadata store는 SQLite를 사용한다.
+dense vector index는 Faiss를 사용한다.
+
+### 8.1 SQLite 테이블: `rag_case_master`
+
+이 테이블은 case 단위 metadata를 저장한다.
+
+권장 스키마:
+
+```sql
+CREATE TABLE IF NOT EXISTS rag_case_master (
+    case_id TEXT PRIMARY KEY,
+    row_id TEXT NOT NULL,
+    space_nm TEXT NOT NULL,
+    sql_id TEXT NOT NULL,
+    tag_kind TEXT NOT NULL,
+    source_db TEXT NOT NULL,
+    target_db TEXT NOT NULL,
+    asis_sql_raw TEXT NOT NULL,
+    asis_sql_preprocessed TEXT NOT NULL,
+    asis_sql_normalized TEXT NOT NULL,
+    tobe_sql_generated TEXT NOT NULL DEFAULT '',
+    correct_sql TEXT NOT NULL,
+    target_tables_json TEXT NOT NULL DEFAULT '[]',
+    table_names_json TEXT NOT NULL DEFAULT '[]',
+    column_names_json TEXT NOT NULL DEFAULT '[]',
+    rule_tags_json TEXT NOT NULL DEFAULT '[]',
+    feature_tags_json TEXT NOT NULL DEFAULT '[]',
+    change_summary TEXT NOT NULL DEFAULT '',
+    parser_version TEXT NOT NULL,
+    normalizer_version TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    active_yn TEXT NOT NULL DEFAULT 'Y',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+```
+
+### 8.2 SQLite 테이블: `rag_case_doc`
+
+이 테이블은 실제 retrieval 대상 문서를 저장한다.
+
+권장 스키마:
+
+```sql
+CREATE TABLE IF NOT EXISTS rag_case_doc (
+    doc_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL,
+    doc_type TEXT NOT NULL,
+    doc_text TEXT NOT NULL,
+    tokenized_text_json TEXT NOT NULL DEFAULT '[]',
+    faiss_row_id INTEGER NOT NULL,
+    source_priority REAL NOT NULL DEFAULT 1.0,
+    active_yn TEXT NOT NULL DEFAULT 'Y',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(case_id) REFERENCES rag_case_master(case_id)
+);
+```
+
+권장 인덱스:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_rag_case_master_space_sql
+ON rag_case_master(space_nm, sql_id);
+
+CREATE INDEX IF NOT EXISTS idx_rag_case_master_active
+ON rag_case_master(active_yn, tag_kind);
+
+CREATE INDEX IF NOT EXISTS idx_rag_case_doc_case
+ON rag_case_doc(case_id, doc_type, active_yn);
+```
+
+### 8.3 Faiss 인덱스
+
+Faiss는 별도 파일로 저장한다.
+
+- `migration_tobe_rag.faiss`
+
+`rag_case_doc.faiss_row_id`가 Faiss 내부 벡터 위치를 가리키는 구조로 간다.
+
+v1에서는 아래 정책을 사용한다.
+
+- `IndexFlatIP` 사용
+- 벡터는 저장 전에 normalize
+- normalized vector의 inner product를 cosine similarity처럼 사용
+
+## 9. Case 및 Document 모델
+
+### 9.1 Case 단위
+
+retrieval의 기본 단위는 raw SQL row 자체가 아니다.
+아래 정보를 포함한 migration case 단위다.
+
+- raw ASIS SQL
+- preprocessed SQL
+- normalized SQL
+- correct SQL
+- target tables
+- 구조 feature tag
+- migration rule tag
+- change summary
+
+### 9.2 Document 타입
+
+한 case는 여러 retrieval 문서로 분해해서 저장한다.
+
+v1에서는 아래 3종만 사용한다.
+
+- `sql_shape`
+- `rule_summary`
+- `diff_summary`
+
+`business_summary`는 business domain 추론을 사용하지 않으므로 의도적으로 제외한다.
+
+## 10. Corpus 정책
+
+### 10.1 인덱싱 포함 조건
+
+아래 조건을 모두 만족하는 row만 인덱싱한다.
+
+- `correct_sql` 존재
+- MyBatis 전처리 후 parser 성공
+
+### 10.2 correct SQL 선택 규칙
+
+correct SQL 선택 우선순위:
+
+1. `TOBE_CORRECT_SQL`
+2. fallback 허용 시 legacy `CORRECT_SQL`
+
+둘 다 없으면 제외한다.
+
+### 10.3 parser 실패 처리 정책
+
+인덱싱 중 parser 실패 시:
+
+- corpus에서 제외
+
+온라인 query 처리 중 parser 실패 시:
+
+- RAG 스킵
+- TOBE 생성은 계속 진행
+
+## 11. MyBatis 전처리
+
+전처리 범위는 1차에서 의도적으로 제한한다.
+
+지원 대상:
+
+- `<if>`
+- `<choose>`
+- `<when>`
+- `<otherwise>`
+- `<foreach>`
+- `#{param}`
+- `${param}`
+
+전처리 목적은 정확한 렌더링 복원이 아니다.
+parser가 구조를 읽을 수 있도록 parse-friendly SQL로 바꾸는 것이 목적이다.
+
+예시 치환 전략:
+
+- `<if ...>` -> marker comment 또는 내부 SQL 보존
+- `<choose>` / `<when>` / `<otherwise>` -> marker comment
+- `<foreach>` -> marker block 또는 synthetic placeholder
+- `#{foo}` -> `:BIND_FOO`
+- `${foo}` -> `__MB_SUBST_FOO__`
+
+## 12. 파싱 및 정규화
+
+### 12.1 parser
+
+- parser 라이브러리: `sqlglot`
+- dialect: `oracle`
+
+### 12.2 정규화 목표
+
+정규화는 SQL의 표면 차이를 줄이고 구조를 더 잘 드러내기 위한 것이다.
+
+권장 정규화 규칙:
+
+- keyword casing 통일
+- 공백 및 줄바꿈 정리
+- literal 값 표준화
+- string literal -> `<STR>`
+- numeric literal -> `<NUM>`
+- bind variable 표준화
+- 지원하는 MyBatis placeholder 표준화
+- formatting 차이 제거
+
+완전한 SQL 재작성기가 목적은 아니다.
+retrieval 강건성을 높이는 수준이면 충분하다.
+
+## 13. Feature 추출
+
+v1 기준 최소 feature 추출 항목:
+
+- query type
+- table names
+- column names
+- join count
+- subquery count
+- group-by 존재 여부
+- order-by 존재 여부
+- having 존재 여부
+- window function 존재 여부
+- aggregate 존재 여부
+- union 존재 여부
+- exists / not exists 존재 여부
+- pagination 존재 여부
+- dynamic SQL 여부
+- MyBatis tag 사용 여부
+- target tables
+
+`feature_tags` 예시:
+
+- `SELECT`
+- `SUBQUERY`
+- `GROUP_BY`
+- `ORDER_BY`
+- `PAGING`
+- `WINDOW_FUNCTION`
+- `MYBATIS_IF`
+- `MYBATIS_CHOOSE`
+- `MYBATIS_FOREACH`
+
+## 14. Rule Tag 추출
+
+rule tag는 retrieval 품질의 핵심 신호 중 하나다.
+
+v1에서 권장하는 rule tag 예시:
+
+- `NVL_TO_COALESCE`
+- `DECODE_TO_CASE`
+- `ROWNUM_REWRITE`
+- `OUTER_JOIN_PLUS_TO_ANSI_JOIN`
+- `SYSDATE_TO_CURRENT_TIMESTAMP`
+- `CONNECT_BY_REWRITE`
+- `LISTAGG_REWRITE`
+- `MERGE_REWRITE`
+
+중요한 구분:
+
+- feature tag는 source SQL에 어떤 특징이 있는지 설명한다.
+- rule tag는 어떤 migration 변환 규칙이 적용될 가능성이 높은지 설명한다.
+
+예:
+
+- feature tag: `NVL_PRESENT`
+- rule tag: `NVL_TO_COALESCE`
+
+## 15. 문서 텍스트 포맷
+
+### 15.1 `sql_shape`
+
+예시:
+
+```text
+SQL shape summary.
+Tag kind: SELECT
+Query type: SELECT
+Target tables: ORDERS, CUSTOMER
+Main tables: TB_ORDER, TB_CUSTOMER
+Features: PAGING, SUBQUERY, ORDER_BY, MYBATIS_IF
+Functions: NVL, DECODE
+Pagination: ROWNUM
+Dynamic SQL: yes
+```
+
+### 15.2 `rule_summary`
+
+예시:
+
+```text
+Migration rule summary.
+Likely applied rules:
+- NVL to COALESCE
+- DECODE to CASE
+- Oracle outer join (+) to ANSI JOIN
+- ROWNUM paging rewrite
+```
+
+### 15.3 `diff_summary`
+
+예시:
+
+```text
+Transformation diff summary.
+Original SQL contains Oracle-specific null handling, conditional expression, and paging syntax.
+Correct SQL rewrites conditional and paging behavior while preserving filters, joins, and ordering.
+Detected changes:
+- Oracle function replacement
+- Paging rewrite
+- Join syntax normalization
+```
+
+## 16. Dense Retrieval 설계
+
+dense retrieval은 현재 embedding endpoint로 생성한 벡터를 Faiss에 저장해서 사용한다.
+
+query 측:
+
+- `sql_shape` 문서 생성
+- `rule_summary` 문서 생성
+- `diff_summary` 문서 생성
+
+검색 측:
+
+- doc_type별 top-k 검색
+- `case_id` 기준 병합
+- doc_type별 최고 similarity 유지
+
+권장 dense score:
+
+```text
+dense_score =
+0.45 * sim(sql_shape)
++ 0.35 * sim(rule_summary)
++ 0.20 * sim(diff_summary)
+```
+
+권장 기본값:
+
+- `TOBE_RAG_TOP_K_DENSE=12`
+
+## 17. Sparse Retrieval 설계
+
+sparse retrieval은 `doc_text` 전체를 그대로 쓰지 않는다.
+정확 매칭이 중요한 SQL 신호 위주로 token을 따로 만든다.
+
+권장 sparse token source:
+
+- rule tags
+- feature tags
+- target tables
+- Oracle-specific keyword
+- MyBatis token
+- 일부 normalized SQL keyword
+
+예시 token:
+
+- `NVL`
+- `DECODE`
+- `ROWNUM`
+- `OUTER_JOIN_PLUS`
+- `MYBATIS_IF`
+- `MYBATIS_FOREACH`
+- `GROUP_BY`
+
+권장 라이브러리:
+
+- `rank-bm25`
+
+권장 기본값:
+
+- `TOBE_RAG_TOP_K_SPARSE=12`
+
+## 18. Metadata Filter
+
+metadata filter는 retrieval 전 후보군을 줄이는 역할을 한다.
+
+v1에서 권장하는 필터:
+
+- `active_yn = 'Y'`
+- `tag_kind`
+- `source_db = 'Oracle'`
+- `target_db = 'PostgreSQL'` 또는 시스템 기준 target
+
+가산점 또는 soft signal로 사용할 항목:
+
+- target table overlap
+- `space_nm` 유사성
+- mapping-rule 관련성
+
+hard filter를 너무 공격적으로 두면 recall이 깨질 수 있으므로 최소화하는 것이 좋다.
+
+## 19. Pre-rerank 점수
+
+pre-rerank 점수는 dense, sparse, symbolic signal을 합친 뒤 LLM rerank 이전에 후보를 정리하는 단계다.
+
+권장 공식:
+
+```text
+pre_rerank_score =
+0.50 * dense_score
++ 0.20 * sparse_score
++ 0.20 * rule_overlap_score
++ 0.10 * target_table_match_score
+```
+
+정의:
+
+- `dense_score`: weighted dense similarity
+- `sparse_score`: 정규화된 BM25 score
+- `rule_overlap_score`: query rule tag와 candidate rule tag의 overlap ratio
+- `target_table_match_score`: target table overlap 기반 가산점
+
+v1에서 사용하지 않는 항목:
+
+- business-domain score
+- validation-quality score
+- acceptance-rate score
+- reuse-count score
+
+## 20. LLM Rerank
+
+LLM rerank는 기존 LLM provider와 endpoint를 그대로 사용한다.
+별도의 rerank 전용 모델은 도입하지 않는다.
+
+권장 rerank 흐름:
+
+1. pre-rerank 상위 8건 선택
+2. compact summary만 LLM에 전달
+3. 구조적으로 가장 적합한 migration case 순서로 재정렬
+4. 최종 상위 4건을 prompt example로 사용
+
+권장 기본값:
+
+- `TOBE_RAG_TOP_K_RERANK=8`
+- `TOBE_RAG_TOP_K_PROMPT=4`
+
+예상 출력 형태:
+
+```json
+{
+  "ranked_case_ids": ["case_12", "case_05", "case_22"],
+  "reasons": {
+    "case_12": "Shares NVL, ROWNUM paging, and dynamic where structure.",
+    "case_05": "Similar join rewrite but weaker pagination match."
+  }
+}
+```
+
+권장 새 prompt 파일:
+
+- `app/prompts/tobe_rag_rerank_prompt.txt`
+
+## 21. Prompt 주입 포맷
+
+TOBE 생성 prompt에는 full SQL 대신 compact case summary를 넣는다.
+
+권장 payload 예시:
+
+```json
+[
+  {
+    "case_id": "TOBE::order.list::001",
+    "why_matched": "Shares NVL, DECODE, ROWNUM paging, and MyBatis if-conditions.",
+    "applied_rules": [
+      "NVL to COALESCE",
+      "DECODE to CASE",
+      "ROWNUM paging rewrite"
+    ],
+    "change_summary": "Oracle-specific null handling and paging were rewritten while preserving order and filters.",
+    "shape_summary": "SELECT, PAGING, ORDER_BY, SUBQUERY, MYBATIS_IF"
+  }
+]
+```
+
+1차에서는 reference SQL 전문을 prompt에 거의 넣지 않는 방향으로 간다.
+나중에 필요성이 확인되면 일부 clause만 제한적으로 넣는 방향을 검토할 수 있다.
+
+## 22. 서비스 인터페이스
+
+### 22.1 `rag/tobe_rag_indexer.py`
+
+권장 인터페이스:
+
+```python
+class TobeRagIndexer:
+    def sync_index(self, limit: int | None = None, rebuild: bool = False) -> dict[str, int]:
+        ...
+```
+
+```python
+    def build_case_from_row(self, row: dict[str, str]) -> TobeRagCase | None:
+        ...
+```
+
+```python
+    def build_docs_for_case(self, case: TobeRagCase) -> list[TobeRagDoc]:
+        ...
+```
+
+```python
+    def embed_docs(self, docs: list[TobeRagDoc]) -> list[list[float]]:
+        ...
+```
+
+### 22.2 `rag/tobe_rag_service.py`
+
+권장 인터페이스:
+
+```python
+class TobeRagService:
+    def retrieve_reference_cases(
+        self,
+        job: SqlInfoJob,
+        mapping_rules: list[MappingRuleItem] | None = None,
+        last_error: str | None = None,
+    ) -> list[dict[str, str]]:
+        ...
+```
+
+```python
+    def build_query_case(
+        self,
+        job: SqlInfoJob,
+        mapping_rules: list[MappingRuleItem] | None = None,
+    ) -> TobeRagCase | None:
+        ...
+```
+
+```python
+    def search_dense(self, query_case: TobeRagCase) -> list[RetrievalCandidate]:
+        ...
+```
+
+```python
+    def search_sparse(self, query_case: TobeRagCase) -> list[RetrievalCandidate]:
+        ...
+```
+
+```python
+    def rerank_with_llm(
+        self,
+        query_case: TobeRagCase,
+        candidates: list[RetrievalCandidate],
+    ) -> list[RetrievalCandidate]:
+        ...
+```
+
+```python
+    def serialize_prompt_examples(
+        self,
+        query_case: TobeRagCase,
+        ranked_candidates: list[RetrievalCandidate],
+    ) -> list[dict[str, str]]:
+        ...
+```
+
+## 23. Repository 및 Corpus Loader 변경
+
+기존 feedback RAG loader를 그대로 쓰기보다 `result_repository.py`에 TOBE 전용 corpus loader를 추가하는 것을 권장한다.
+
+권장 함수:
+
+```python
+def get_tobe_rag_corpus_rows(
+    limit: int = 2000,
+    allow_legacy_fallback: bool = True,
+) -> list[dict[str, str]]:
+    ...
+```
+
+예상 반환 필드:
+
+- `row_id`
+- `space_nm`
+- `sql_id`
+- `tag_kind`
+- `fr_sql_text`
+- `edit_fr_sql`
+- `to_sql_text`
+- `target_table`
+- `tobe_correct_sql`
+- `legacy_correct_sql`
+- `correct_sql`
+- `edited_yn`
+- `upd_ts`
+
+## 24. Orchestrator 연동
+
+`app/orchestrator.py`의 TOBE retrieval 호출을 교체한다.
+
+현재:
+
+- `rag.feedback_rag_service.retrieve_feedback_examples(...)`
+
+변경 후:
+
+- `rag.tobe_rag_service.retrieve_reference_cases(...)`
+
+prompt example도 기존처럼 `correct_sql`, `generated_sql`, `source_sql` 중심이 아니라 아래 중심으로 바뀐다.
+
+- `case_id`
+- `why_matched`
+- `applied_rules`
+- `change_summary`
+- `shape_summary`
+
+이에 맞춰 `app/services/llm_service.py`의 serialization도 같이 바꿔야 한다.
+
+## 25. Startup Sync 연동
+
+batch startup sync도 최종적으로는 새 TOBE RAG indexer를 사용해야 한다.
+
+권장 전환 순서:
+
+1. 새 TOBE RAG sync 추가
+2. TOBE retrieval을 새 서비스로 연결
+3. startup 및 retrieval 동작 검증
+4. old feedback RAG sync 제거
+5. `rag/feedback_rag_service.py` 제거
+
+## 26. 툴링
+
+### 26.1 `tools/sync_tobe_rag.py`
+
+권장 옵션:
+
+- 기본 증분 sync
+- `--limit`
+- `--rebuild`
+
+### 26.2 `tools/inspect_tobe_rag.py`
+
+권장 출력:
+
+- 전체 case 수
+- 전체 doc 수
+- parser 성공 corpus 수
+- `doc_type`별 문서 수
+- 최근 case 미리보기
+- optional retrieval dry-run preview
+
+## 27. 의존성 추가
+
+`requirements.txt`에 아래 추가를 예상한다.
+
+- `sqlglot`
+- `faiss-cpu`
+- `rank-bm25`
+
+주의:
+
+- Windows 환경에서 `faiss-cpu` 호환성은 구현 시점에 실제 확인이 필요하다.
+- Faiss 설치가 장애가 되더라도 설계 목표는 Faiss 유지다.
+
+## 28. 리스크
+
+v1의 주요 리스크:
+
+- Oracle + MyBatis 조합 SQL이 전처리 후에도 `sqlglot`에서 실패할 수 있음
+- `faiss-cpu`가 현재 환경에서 설치 또는 실행 이슈가 있을 수 있음
+- rule tag 품질이 retrieval 품질에 큰 영향을 줌
+- summary 중심 prompt injection이 약하면 정보 손실이 생길 수 있음
+
+따라서 목표는 parser 성공률을 무조건 올리는 것이 아니다.
+고품질 corpus만 유지해서 retrieval 품질을 예측 가능하게 만드는 것이다.
+
+## 29. 구현 순서
+
+권장 구현 순서:
+
+1. `requirements.txt`, `.env.example` 수정
+2. `rag/tobe_rag_models.py` 추가
+3. `rag/tobe_rag_indexer.py` 추가
+4. `rag/tobe_rag_service.py` 추가
+5. `result_repository.py`에 TOBE corpus loader 추가
+6. `tools/sync_tobe_rag.py` 추가
+7. `tools/inspect_tobe_rag.py` 추가
+8. `orchestrator.py`에 TOBE retrieval 연동
+9. `llm_service.py` prompt serialization 수정
+10. startup sync 및 runtime 동작 검증
+11. cutover 완료 후 legacy feedback RAG 제거
+
+## 30. Legacy Feedback RAG 제거 순서
+
+legacy feedback RAG는 처음부터 지우지 않는다.
+
+권장 제거 순서:
+
+1. 새 TOBE RAG 구현
+2. TOBE stage를 새 RAG로 연결
+3. runtime 동작 검증
+4. README 및 tests 갱신
+5. 아래 제거
+   - `app/services/rag/feedback_rag_service.py`
+   - 관련 legacy sync tool
+   - old feedback RAG 전용 stub 및 test
+
+## 31. 요약
+
+1차 TOBE RAG 재구축은 아래 성격을 가져야 한다.
+
+- TOBE 전용
+- parser-gated
+- case 기반
+- multi-view 문서 기반
+- hybrid retrieval
+- LLM rerank 포함
+- prompt는 summary-first
+
+이번 설계는 business domain 추론, block-level retrieval, 고급 품질 신호 같은 요소를 일부러 뒤로 미뤘다.
+우선은 운영 가능하고 구조가 깔끔한 아키텍처를 먼저 세우고, 그 위에서 점진적으로 개선하는 것이 목표다.

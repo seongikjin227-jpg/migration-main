@@ -1,4 +1,4 @@
-"""bind 파라미터 탐지와 bind_set 구성 유틸."""
+"""Helpers for detecting bind parameters and building bind-set payloads."""
 
 import json
 import re
@@ -36,7 +36,7 @@ _RESERVED_WORDS = {
 
 
 def _normalize_param_name(token: str) -> str:
-    """`#{dto.id}` 형태를 최종 bind 키(`id`)로 정규화한다."""
+    """Normalize placeholder tokens to the final bind variable name."""
     cleaned = token.strip()
     if not cleaned:
         return ""
@@ -47,7 +47,7 @@ def _normalize_param_name(token: str) -> str:
 
 
 def extract_bind_param_names(sql_text: str) -> list[str]:
-    """MyBatis placeholder에서 중복 없는 bind 파라미터명을 추출한다."""
+    """Extract unique bind parameter names from MyBatis-style placeholders."""
     if not sql_text:
         return []
     names: list[str] = []
@@ -61,13 +61,13 @@ def extract_bind_param_names(sql_text: str) -> list[str]:
 
 
 def _extract_if_param_groups(sql_text: str) -> list[list[str]]:
-    """`<if test='...'>` 조건식을 분석해 분기 커버리지 그룹을 추출한다."""
+    """Group parameters that appear together inside `<if test="...">` conditions."""
     if not sql_text:
         return []
     groups: list[list[str]] = []
     for match in _IF_TEST_PATTERN.finditer(sql_text):
         condition = match.group(1)
-            # 따옴표 리터럴은 파라미터가 아니므로 제거한다.
+        # Remove quoted literals because they are not parameter references.
         condition = re.sub(r"'[^']*'|\"[^\"]*\"", " ", condition)
         group: list[str] = []
         seen = set()
@@ -77,7 +77,7 @@ def _extract_if_param_groups(sql_text: str) -> list[list[str]]:
                 continue
             if ident.isdigit():
                 continue
-            # `dto.status -> status` 형태로 꼬리 식별자를 유지한다.
+            # Normalize dotted names such as `dto.status` down to `status`.
             normalized = _normalize_param_name(ident)
             if normalized and normalized not in seen:
                 group.append(normalized)
@@ -88,7 +88,7 @@ def _extract_if_param_groups(sql_text: str) -> list[list[str]]:
 
 
 def _first_matching_value(row: dict[str, Any], param_name: str):
-    """컬럼 대소문자 차이를 흡수해 bind 이름에 대응하는 값을 찾는다."""
+    """Resolve one bind value from a row without depending on column-name casing."""
     for key in (param_name, param_name.lower(), param_name.upper()):
         if key in row:
             return row[key]
@@ -99,12 +99,12 @@ def _first_matching_value(row: dict[str, Any], param_name: str):
 
 
 def _build_bind_case(param_names: list[str], row: dict[str, Any]) -> dict[str, Any]:
-    """조회 1행을 bind 케이스 1건으로 변환한다."""
+    """Convert one query result row into one bind-case dictionary."""
     return {param: _first_matching_value(row, param) for param in param_names}
 
 
 def _signature_for_case(bind_case: dict[str, Any], if_groups: list[list[str]]) -> tuple:
-    """분기 활성/비활성 패턴 시그니처를 계산한다."""
+    """Build a branch-coverage signature for a bind case."""
     if not if_groups:
         return tuple((k, bind_case.get(k)) for k in sorted(bind_case.keys()))
     signature = []
@@ -115,12 +115,12 @@ def _signature_for_case(bind_case: dict[str, Any], if_groups: list[list[str]]) -
 
 
 def _value_signature(bind_case: dict[str, Any]) -> tuple:
-    """중복 제거용 값 시그니처를 계산한다."""
+    """Build a value signature used to deduplicate bind cases."""
     return tuple((k, bind_case.get(k)) for k in sorted(bind_case.keys()))
 
 
 def _extract_direct_bind_column_map(sql_text: str) -> dict[str, list[str]]:
-    """`COL = #{param}` 패턴을 찾아 param->컬럼 후보 맵을 만든다."""
+    """Infer param-to-column hints from direct `COL = #{param}` comparisons."""
     if not sql_text:
         return {}
     mapped: dict[str, list[str]] = {}
@@ -137,10 +137,7 @@ def _extract_direct_bind_column_map(sql_text: str) -> dict[str, list[str]]:
 
 
 def build_bind_target_hints(tobe_sql: str, source_sql: str) -> dict[str, list[str]]:
-    """
-    bind 파라미터 -> 후보 물리 컬럼 맵을 반환한다.
-    우선순위: TO-BE SQL 우선, 누락 시 SOURCE SQL 보강.
-    """
+    """Merge TO-BE and source SQL hints into one bind-target hint map."""
     merged = _extract_direct_bind_column_map(tobe_sql)
     fallback = _extract_direct_bind_column_map(source_sql)
     for param, columns in fallback.items():
@@ -159,12 +156,7 @@ def build_bind_sets(
     bind_query_rows: list[dict[str, Any]],
     max_cases: int = 3,
 ) -> list[dict[str, Any]]:
-    """최대 3개의 bind 케이스를 생성한다.
-
-    우선순위:
-    1) 분기(<if>) 활성 패턴 다양성
-    2) 값 중복이 적은 케이스
-    """
+    """Select up to three representative bind cases from bind-query result rows."""
     safe_max = max(1, min(max_cases, 3))
     param_names = extract_bind_param_names(tobe_sql)
     if not param_names:
@@ -215,12 +207,12 @@ def build_bind_sets(
 
 
 def bind_sets_to_json(bind_sets: list[dict[str, Any]]) -> str:
-    """bind_set을 프롬프트/DB 저장용 JSON 문자열로 직렬화한다."""
+    """Serialize bind-set payloads for prompt injection or DB storage."""
     return json.dumps(bind_sets, ensure_ascii=False, default=_json_default)
 
 
 def _json_default(value: Any):
-    """JSON 직렬화 불가 타입을 안전한 표현으로 변환한다."""
+    """Convert non-JSON-native values into stable serializable forms."""
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (datetime, date)):

@@ -1,0 +1,970 @@
+[
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "EMPLOYEE_ID",
+    "to_table": "TGT_EMP",
+    "to_col": "EMP_ID",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "EMPLOYEE_ID",
+    "to_table": "TGT_EMP",
+    "to_col": "EMP_ID",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "FIRST_NAME || ' ' || LAST_NAME",
+    "to_table": "TGT_EMP",
+    "to_col": "NAME",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "FIRST_NAME || ' ' || LAST_NAME",
+    "to_table": "TGT_EMP",
+    "to_col": "NAME",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "EMAIL",
+    "to_table": "TGT_EMP",
+    "to_col": "EMAIL",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "EMAIL",
+    "to_table": "TGT_EMP",
+    "to_col": "EMAIL",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "HIRE_DATE",
+    "to_table": "TGT_EMP",
+    "to_col": "HIRE_DATE",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "HIRE_DATE",
+    "to_table": "TGT_EMP",
+    "to_col": "HIRE_DATE",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "JOB_ID",
+    "to_table": "TGT_EMP",
+    "to_col": "JOB_ID",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "JOB_ID",
+    "to_table": "TGT_EMP",
+    "to_col": "JOB_ID",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "SALARY",
+    "to_table": "TGT_EMP",
+    "to_col": "SALARY",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES",
+    "fr_col": "SALARY",
+    "to_table": "TGT_EMP",
+    "to_col": "SALARY",
+    "map_id": "1"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.EMPLOYEE_ID",
+    "to_table": "TGT_EMP_JOB",
+    "to_col": "EMP_ID",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.EMPLOYEE_ID",
+    "to_table": "HR.TGT_EMP_JOB",
+    "to_col": "EMP_ID",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.EMPLOYEE_ID",
+    "to_table": "TGT_EMP_JOB",
+    "to_col": "EMP_ID",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.EMPLOYEE_ID",
+    "to_table": "HR.TGT_EMP_JOB",
+    "to_col": "EMP_ID",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.FIRST_NAME || ' ' || E.LAST_NAME",
+    "to_table": "HR.TGT_EMP_JOB",
+    "to_col": "EMP_NAME",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.FIRST_NAME || ' ' || E.LAST_NAME",
+    "to_table": "TGT_EMP_JOB",
+    "to_col": "EMP_NAME",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.FIRST_NAME || ' ' || E.LAST_NAME",
+    "to_table": "HR.TGT_EMP_JOB",
+    "to_col": "EMP_NAME",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.FIRST_NAME || ' ' || E.LAST_NAME",
+    "to_table": "TGT_EMP_JOB",
+    "to_col": "EMP_NAME",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "J.JOB_TITLE",
+    "to_table": "TGT_EMP_JOB",
+    "to_col": "JOB_TITLE",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "J.JOB_TITLE",
+    "to_table": "HR.TGT_EMP_JOB",
+    "to_col": "JOB_TITLE",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "J.JOB_TITLE",
+    "to_table": "HR.TGT_EMP_JOB",
+    "to_col": "JOB_TITLE",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "J.JOB_TITLE",
+    "to_table": "TGT_EMP_JOB",
+    "to_col": "JOB_TITLE",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.SALARY",
+    "to_table": "TGT_EMP_JOB",
+    "to_col": "SALARY",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.SALARY",
+    "to_table": "TGT_EMP_JOB",
+    "to_col": "SALARY",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.SALARY",
+    "to_table": "HR.TGT_EMP_JOB",
+    "to_col": "SALARY",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES E JOIN HR.JOBS J ON E.JOB_ID = J.JOB_ID",
+    "fr_col": "E.SALARY",
+    "to_table": "HR.TGT_EMP_JOB",
+    "to_col": "SALARY",
+    "map_id": "3"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.EMPLOYEE_ID",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "EMPLOYEE_ID",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.FIRST_NAME",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "FIRST_NAME",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.LAST_NAME",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "LAST_NAME",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.EMAIL",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "EMAIL",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.PHONE_NUMBER",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "PHONE_NUMBER",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.HIRE_DATE",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "HIRE_DATE",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.DEPARTMENT_ID",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "DEPARTMENT_ID",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "d.DEPARTMENT_NAME",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "DEPARTMENT_NAME",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.JOB_ID",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "JOB_ID",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "j.JOB_TITLE",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "JOB_TITLE",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.SALARY",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "CURRENT_SALARY",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.COMMISSION_PCT",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "COMMISSION_PCT",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "e.MANAGER_ID",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "MANAGER_ID",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "d.MANAGER_ID",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "DEPT_MANAGER_ID",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "CASE WHEN e.SALARY >= 20000 THEN 'EXEC' WHEN e.SALARY >= 12000 THEN 'HIGH' WHEN e.SALARY >= 7000 THEN 'MID' ELSE 'LOW' END",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "SALARY_BAND",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "CASE WHEN j.MAX_SALARY IS NULL THEN 'NO_JOB_RANGE' WHEN e.SALARY > j.MAX_SALARY THEN 'ABOVE_JOB_MAX' WHEN e.SALARY < j.MIN_SALARY THEN 'BELOW_JOB_MIN' ELSE 'IN_JOB_RANGE' END",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "JOB_RANGE_STATUS",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "CASE WHEN e.MANAGER_ID IS NULL THEN 'NO_MANAGER' ELSE 'HAS_MANAGER' END",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "MANAGER_EXISTS_YN",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "ROW_NUMBER() OVER (PARTITION BY e.DEPARTMENT_ID ORDER BY e.SALARY DESC, e.EMPLOYEE_ID)",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "DEPT_SALARY_RANK",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "DENSE_RANK() OVER (PARTITION BY e.JOB_ID ORDER BY e.SALARY DESC)",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "JOB_SALARY_RANK",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.DEPARTMENTS d ON d.DEPARTMENT_ID=e.DEPARTMENT_ID LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "COUNT(*) OVER (PARTITION BY e.DEPARTMENT_ID)",
+    "to_table": "HR.HR_EMP_DEPT_JOB_SNAP",
+    "to_col": "DEPT_EMP_COUNT",
+    "map_id": "101"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "d.DEPARTMENT_ID",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "DEPARTMENT_ID",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "d.DEPARTMENT_NAME",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "DEPARTMENT_NAME",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "d.MANAGER_ID",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "DEPT_MANAGER_ID",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "COUNT(e.EMPLOYEE_ID)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "EMP_COUNT",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "COUNT(DISTINCT e.JOB_ID)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "DISTINCT_JOB_COUNT",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "SUM(e.SALARY)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "TOTAL_SALARY",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "ROUND(AVG(e.SALARY), 2)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "AVG_SALARY",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "MIN(e.SALARY)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "MIN_SALARY",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "MAX(e.SALARY)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "MAX_SALARY",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "MEDIAN(e.SALARY)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "MEDIAN_SALARY",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "STDDEV(e.SALARY)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "SALARY_STDDEV",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "MIN(e.HIRE_DATE)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "FIRST_HIRE_DATE",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "MAX(e.HIRE_DATE)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "LAST_HIRE_DATE",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "SUM(CASE WHEN e.SALARY >= 12000 THEN 1 ELSE 0 END)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "HIGH_SALARY_COUNT",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "SUM(CASE WHEN e.SALARY < 7000 THEN 1 ELSE 0 END)",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "LOW_SALARY_COUNT",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "CASE WHEN COUNT(e.EMPLOYEE_ID) = 0 THEN 'EMPTY' WHEN COUNT(e.EMPLOYEE_ID) >= 10 THEN 'LARGE' WHEN COUNT(e.EMPLOYEE_ID) >= 5 THEN 'MEDIUM' ELSE 'SMALL' END",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "DEPT_SIZE_BAND",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "CASE WHEN AVG(e.SALARY) IS NULL THEN 'N/A' WHEN AVG(e.SALARY) >= 12000 THEN 'HIGH_PAY' WHEN AVG(e.SALARY) >= 7000 THEN 'MID_PAY' ELSE 'LOW_PAY' END",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "DEPT_PAY_BAND",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "CASE WHEN COUNT(DISTINCT e.JOB_ID) >= 4 THEN 'DIVERSE' WHEN COUNT(DISTINCT e.JOB_ID) >= 2 THEN 'BALANCED' ELSE 'NARROW' END",
+    "to_table": "HR.HR_DEPT_PAYROLL_ROLLUP_F",
+    "to_col": "JOB_DIVERSITY_BAND",
+    "map_id": "102"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.EMPLOYEE_ID / jh.EMPLOYEE_ID",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "EMPLOYEE_ID",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "'CURRENT' / 'HISTORY'",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "EVENT_SOURCE",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.HIRE_DATE / jh.START_DATE",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "EVENT_DATE",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "CAST(NULL AS DATE) / jh.END_DATE",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "EVENT_END_DATE",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.JOB_ID / jh.JOB_ID",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "JOB_ID",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.DEPARTMENT_ID / jh.DEPARTMENT_ID",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "DEPARTMENT_ID",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.SALARY / CAST(NULL AS NUMBER)",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "CURRENT_SALARY",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "CAST(NULL AS NUMBER) / TRUNC(NVL(jh.END_DATE, SYSDATE) - jh.START_DATE)",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "HISTORY_GAP_DAYS",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "'CURRENT_SNAPSHOT' / 'JOB_HISTORY'",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "EVENT_TYPE",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "CASE WHEN s.EVENT_END_DATE IS NULL THEN 'OPEN' ELSE 'CLOSED' END",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "EVENT_STATUS",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "ROW_NUMBER() OVER (PARTITION BY s.EMPLOYEE_ID ORDER BY s.EVENT_DATE, s.EVENT_SOURCE)",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "EMP_EVENT_SEQ",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "LAG(s.JOB_ID) OVER (PARTITION BY s.EMPLOYEE_ID ORDER BY s.EVENT_DATE, s.EVENT_SOURCE)",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "PREV_JOB_ID",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(CURRENT UNION ALL HISTORY) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "LAG(s.DEPARTMENT_ID) OVER (PARTITION BY s.EMPLOYEE_ID ORDER BY s.EVENT_DATE, s.EVENT_SOURCE)",
+    "to_table": "HR.HR_EMP_CAREER_EVENT_F",
+    "to_col": "PREV_DEPARTMENT_ID",
+    "map_id": "103"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.EMPLOYEE_ID / jh.EMPLOYEE_ID",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "EMPLOYEE_ID",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.HIRE_DATE / jh.START_DATE",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "EVENT_DATE",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "CAST(NULL AS DATE) / jh.END_DATE",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "EVENT_END_DATE",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "CAST(NULL AS VARCHAR2(100)) / CAST(NULL AS VARCHAR2(100))",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "DD",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "CAST(NULL AS VARCHAR2(50)) / CAST(NULL AS VARCHAR2(50))",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "EE_SIGNAL",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "'EMPLOYEES' / 'JOB_HISTORY'",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "SOURCE_TAG",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.SALARY / CAST(NULL AS NUMBER)",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "CURRENT_SALARY",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "CAST(NULL AS NUMBER) / TRUNC(NVL(jh.END_DATE, SYSDATE) - jh.START_DATE)",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "HISTORY_GAP_DAYS",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.JOB_ID / jh.JOB_ID",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "JOB_ID",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "e.DEPARTMENT_ID / jh.DEPARTMENT_ID",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "DEPARTMENT_ID",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "CASE WHEN u.SOURCE_TAG = 'EMPLOYEES' THEN 'CURRENT_TRACK' ELSE 'HISTORY_TRACK' END",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "TRACK_TYPE",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "(AA/BB/CC/EE CASE UNION ALL) FROM HR.EMPLOYEES, HR.JOB_HISTORY",
+    "fr_col": "ROW_NUMBER() OVER (PARTITION BY u.EMPLOYEE_ID, u.SOURCE_TAG ORDER BY u.EVENT_DATE)",
+    "to_table": "HR.HR_EMP_HISTORY_STACKED_F",
+    "to_col": "TRACK_SEQ",
+    "map_id": "104"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_CHAR(s.EMPLOYEE_ID)",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "EMPLOYEE_ID_TXT",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_CHAR(s.HIRE_DATE, 'YYYYMMDD')",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "HIRE_DATE_YYYYMMDD",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_CHAR(s.SALARY, 'FM9999990D00', 'NLS_NUMERIC_CHARACTERS=.,')",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "SALARY_TXT",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_NUMBER(TO_CHAR(s.SALARY, 'FM9999990D00', 'NLS_NUMERIC_CHARACTERS=.,'), '9999990D00', 'NLS_NUMERIC_CHARACTERS=.,')",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "SALARY_NUM",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "NVL(TO_CHAR(s.COMMISSION_PCT, 'FM0D99', 'NLS_NUMERIC_CHARACTERS=.,'), '0.00')",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "COMMISSION_TXT",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_CHAR(s.DEPARTMENT_ID)",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "DEPARTMENT_ID_TXT",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_CHAR(s.JOB_ID)",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "JOB_ID_TXT",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_CHAR(s.MIN_SALARY)",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "MIN_SALARY_TXT",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_CHAR(s.MAX_SALARY)",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "MAX_SALARY_TXT",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "CAST(s.MIN_SALARY AS NUMBER(12,2))",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "MIN_SALARY_DECIMAL",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "CAST(s.MAX_SALARY AS NUMBER(12,2))",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "MAX_SALARY_DECIMAL",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_DATE(TO_CHAR(s.HIRE_DATE, 'YYYYMMDD'), 'YYYYMMDD')",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "HIRE_DATE_ROUNDTRIP",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "TO_CHAR(ORA_HASH(TO_CHAR(s.EMPLOYEE_ID) || ':' || TO_CHAR(s.HIRE_DATE, 'YYYYMMDD') || ':' || TO_CHAR(s.JOB_ID)))",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "EMP_HASH_KEY",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "CASE WHEN c.SALARY_NUM IS NULL THEN 'NUM_CAST_FAIL' WHEN c.HIRE_DATE_ROUNDTRIP IS NULL THEN 'DATE_CAST_FAIL' ELSE 'OK' END",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "CAST_QUALITY_STATUS",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.EMPLOYEES e LEFT JOIN HR.JOBS j ON j.JOB_ID=e.JOB_ID",
+    "fr_col": "CASE WHEN c.MIN_SALARY_DECIMAL IS NULL OR c.MAX_SALARY_DECIMAL IS NULL THEN 'JOB_RANGE_MISSING' WHEN c.MIN_SALARY_DECIMAL > c.MAX_SALARY_DECIMAL THEN 'JOB_RANGE_INVALID' ELSE 'JOB_RANGE_OK' END",
+    "to_table": "HR.HR_EMP_TYPECAST_AUDIT",
+    "to_col": "JOB_RANGE_CHECK",
+    "map_id": "105"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "TO_CHAR(a.DEPARTMENT_ID)",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "DEPARTMENT_ID_TXT",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "LPAD(TO_CHAR(a.DEPARTMENT_ID), 6, '0')",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "DEPARTMENT_ID_LPAD",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "a.DEPARTMENT_NAME",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "DEPARTMENT_NAME",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "TO_CHAR(a.EMP_COUNT)",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "EMP_COUNT_TXT",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "CAST(a.EMP_COUNT AS NUMBER(10,0))",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "EMP_COUNT_NUM",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "TO_CHAR(a.TOTAL_SALARY, 'FM9999999990D00', 'NLS_NUMERIC_CHARACTERS=.,')",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "TOTAL_SALARY_TXT",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "TO_CHAR(a.AVG_SALARY, 'FM9999990D00', 'NLS_NUMERIC_CHARACTERS=.,')",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "AVG_SALARY_TXT",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "TO_CHAR(a.MIN_SALARY, 'FM9999990D00', 'NLS_NUMERIC_CHARACTERS=.,')",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "MIN_SALARY_TXT",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "TO_CHAR(a.MAX_SALARY, 'FM9999990D00', 'NLS_NUMERIC_CHARACTERS=.,')",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "MAX_SALARY_TXT",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "CAST(a.AVG_SALARY AS NUMBER(12,2))",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "AVG_SALARY_NUM",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "TO_CHAR(SYSDATE, 'YYYYMMDD')",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "SNAP_DATE_YYYYMMDD",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "TO_DATE(TO_CHAR(SYSDATE, 'YYYYMMDD'), 'YYYYMMDD')",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "SNAP_DATE",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "TO_CHAR(ORA_HASH(TO_CHAR(a.DEPARTMENT_ID) || ':' || TO_CHAR(a.EMP_COUNT) || ':' || TO_CHAR(NVL(a.TOTAL_SALARY,0))))",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "DEPT_HASH_KEY",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "CASE WHEN c.EMP_COUNT_NUM = 0 THEN 'EMPTY' WHEN c.EMP_COUNT_NUM >= 10 THEN 'LARGE' WHEN c.EMP_COUNT_NUM >= 5 THEN 'MEDIUM' ELSE 'SMALL' END",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "DEPT_SIZE_BAND",
+    "map_id": "106"
+  },
+  {
+    "map_type": "",
+    "fr_table": "HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON e.DEPARTMENT_ID=d.DEPARTMENT_ID",
+    "fr_col": "CASE WHEN c.AVG_SALARY_NUM IS NULL THEN 'N/A' WHEN c.AVG_SALARY_NUM >= 12000 THEN 'HIGH_PAY' WHEN c.AVG_SALARY_NUM >= 7000 THEN 'MID_PAY' ELSE 'LOW_PAY' END",
+    "to_table": "HR.HR_DEPT_TYPECAST_AUDIT",
+    "to_col": "DEPT_PAY_BAND",
+    "map_id": "106"
+  }
+]

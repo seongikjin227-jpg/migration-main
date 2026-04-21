@@ -1,9 +1,4 @@
-"""Stage-aware correct SQL 기반 feedback RAG 서비스.
-
-운영 원칙:
-1) 벡터 인덱스 동기화는 시작 시점/수동 실행에서만 수행한다.
-2) 배치 실행 중에는 조회만 수행한다.
-"""
+"""Stage-aware correct SQL based feedback RAG service."""
 
 from __future__ import annotations
 
@@ -24,7 +19,7 @@ from app.common import SqlInfoJob
 from app.repositories.result_repository import get_feedback_corpus_rows
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 load_dotenv(ROOT_DIR / ".env")
 _VALID_CORRECT_KINDS = ("TOBE", "BIND", "TEST")
 
@@ -53,18 +48,21 @@ class FeedbackRagService:
         self.embed_timeout_sec = int(os.getenv("RAG_EMBED_TIMEOUT_SEC", "30"))
         self._ensure_schema()
 
-    def sync_index(self, limit: int | None = None) -> dict[str, int]:
+    def sync_index(self, limit: int | None = None, correct_kinds: list[str] | tuple[str, ...] | None = None) -> dict[str, int]:
         target_limit = limit if (limit and limit > 0) else self.corpus_limit
+        selected_kinds = tuple(
+            kind for kind in ((correct_kinds or _VALID_CORRECT_KINDS)) if str(kind).strip().upper() in _VALID_CORRECT_KINDS
+        ) or _VALID_CORRECT_KINDS
         source_rows: list[dict[str, str]] = []
-        for correct_kind in _VALID_CORRECT_KINDS:
+        for correct_kind in selected_kinds:
             try:
-                source_rows.extend(get_feedback_corpus_rows(correct_kind=correct_kind, limit=target_limit))
+                source_rows.extend(
+                    get_feedback_corpus_rows(correct_kind=str(correct_kind).strip().upper(), limit=target_limit)
+                )
             except Exception:
                 continue
 
-        source_doc_ids: set[str] = set()
-        existing_hash = self._load_existing_doc_hash()
-
+        existing_doc_ids = self._load_existing_doc_ids()
         upserted = 0
         skipped_unchanged = 0
         skipped_no_correct_sql = 0
@@ -78,8 +76,6 @@ class FeedbackRagService:
                 skipped_no_correct_sql += 1
                 continue
 
-            doc_id = self._build_doc_id(row)
-            source_doc_ids.add(doc_id)
             pattern_tags = self._extract_pattern_tags(source_sql, generated_sql, correct_sql)
             doc_text = self._build_doc_text(
                 correct_kind=correct_kind,
@@ -88,11 +84,17 @@ class FeedbackRagService:
                 source_sql=source_sql,
                 generated_sql=generated_sql,
                 correct_sql=correct_sql,
+                edited_yn=row.get("edited_yn", ""),
                 pattern_tags=pattern_tags,
             )
             text_hash = self._sha256(doc_text)
+            doc_id = self._build_doc_id(
+                row=row,
+                text_hash=text_hash,
+                pattern_tags=pattern_tags,
+            )
 
-            if existing_hash.get(doc_id) == text_hash:
+            if doc_id in existing_doc_ids:
                 skipped_unchanged += 1
                 continue
 
@@ -113,29 +115,48 @@ class FeedbackRagService:
                 ),
                 text_hash=text_hash,
             )
+            existing_doc_ids.add(doc_id)
             upserted += 1
 
-        deleted = self._delete_removed_docs(source_doc_ids=source_doc_ids)
         return {
             "source_rows": len(source_rows),
             "upserted": upserted,
             "skipped_unchanged": skipped_unchanged,
             "skipped_no_correct_sql": skipped_no_correct_sql,
-            "deleted": deleted,
+            "deleted": 0,
         }
 
     def retrieve_feedback_examples(
         self,
         job: SqlInfoJob,
+        correct_kind: str,
         last_error: str | None = None,
+        tobe_sql: str | None = None,
+        current_stage: str | None = None,
     ) -> list[dict[str, str]]:
-        candidates = self._load_candidates()
+        normalized_kind = (correct_kind or "").strip().upper()
+        if normalized_kind not in _VALID_CORRECT_KINDS:
+            raise ValueError(f"Unsupported correct SQL kind: {correct_kind}")
+
+        candidates = self._load_candidates(correct_kind=normalized_kind)
         if not candidates:
             return []
 
-        query_text = self._build_query_text(job=job, last_error=last_error)
+        query_text = self._build_query_text(
+            job=job,
+            correct_kind=normalized_kind,
+            last_error=last_error,
+            current_stage=current_stage,
+            tobe_sql=tobe_sql,
+        )
         query_embedding = self._embed_texts([query_text])[0]
-        query_tags = self._extract_pattern_tags(job.source_sql, last_error or "")
+        query_tags = self._extract_pattern_tags(
+            job.source_sql,
+            tobe_sql or "",
+            last_error or "",
+            normalized_kind,
+            current_stage or "",
+        )
         ranked = self._rank_candidates(
             query_embedding=query_embedding,
             query_tags=query_tags,
@@ -194,15 +215,22 @@ class FeedbackRagService:
             )
             conn.commit()
 
-    def _load_existing_doc_hash(self) -> dict[str, str]:
+    def _load_existing_doc_ids(self) -> set[str]:
         with sqlite3.connect(self.db_path) as conn:
-            rows = conn.execute(f"SELECT doc_id, text_hash FROM {self.table_name}").fetchall()
-        return {str(row[0]): str(row[1]) for row in rows}
+            rows = conn.execute(f"SELECT doc_id FROM {self.table_name}").fetchall()
+        return {str(row[0]) for row in rows}
 
-    def _build_doc_id(self, row: dict[str, str]) -> str:
+    def _build_doc_id(
+        self,
+        row: dict[str, str],
+        text_hash: str,
+        pattern_tags: list[str],
+    ) -> str:
+        tag_hash = self._sha256(",".join(pattern_tags))
         return (
             f"{row.get('correct_kind', 'TOBE')}::"
-            f"{row.get('space_nm', '')}.{row.get('sql_id', '')}::{row.get('row_id', '')}"
+            f"{row.get('space_nm', '')}.{row.get('sql_id', '')}::"
+            f"{row.get('row_id', '')}::{tag_hash[:12]}::{text_hash[:16]}"
         )
 
     def _build_doc_text(
@@ -213,12 +241,40 @@ class FeedbackRagService:
         source_sql: str,
         generated_sql: str,
         correct_sql: str,
+        edited_yn: str,
         pattern_tags: list[str],
     ) -> str:
-        return (source_sql or "").strip()
+        payload = {
+            "correct_kind": (correct_kind or "").strip().upper(),
+            "space_nm": (space_nm or "").strip(),
+            "sql_id": (sql_id or "").strip(),
+            "source_sql": (source_sql or "").strip(),
+            "generated_sql": (generated_sql or "").strip(),
+            "correct_sql": (correct_sql or "").strip(),
+            "edited_yn": (edited_yn or "").strip(),
+            "pattern_tags": pattern_tags,
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
-    def _build_query_text(self, job: SqlInfoJob, last_error: str | None) -> str:
-        return (job.source_sql or "").strip()
+    def _build_query_text(
+        self,
+        job: SqlInfoJob,
+        correct_kind: str,
+        last_error: str | None,
+        current_stage: str | None = None,
+        tobe_sql: str | None = None,
+    ) -> str:
+        payload = {
+            "current_stage": (current_stage or "").strip().upper(),
+            "correct_kind": (correct_kind or "").strip().upper(),
+            "space_nm": (job.space_nm or "").strip(),
+            "sql_id": (job.sql_id or "").strip(),
+            "source_sql": (job.source_sql or "").strip(),
+            "tobe_sql": (tobe_sql or "").strip(),
+            "target_table": (job.target_table or "").strip(),
+            "last_error": (last_error or "").strip(),
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
     def _upsert_vector(self, item: _VectorItem, text_hash: str) -> None:
         with sqlite3.connect(self.db_path) as conn:
@@ -258,30 +314,17 @@ class FeedbackRagService:
             )
             conn.commit()
 
-    def _delete_removed_docs(self, source_doc_ids: set[str]) -> int:
-        if not source_doc_ids:
-            return 0
-        with sqlite3.connect(self.db_path) as conn:
-            existing_ids = [row[0] for row in conn.execute(f"SELECT doc_id FROM {self.table_name}").fetchall()]
-            to_delete = [doc_id for doc_id in existing_ids if doc_id not in source_doc_ids]
-            if not to_delete:
-                return 0
-            conn.executemany(
-                f"DELETE FROM {self.table_name} WHERE doc_id = ?",
-                [(doc_id,) for doc_id in to_delete],
-            )
-            conn.commit()
-            return len(to_delete)
-
-    def _load_candidates(self) -> list[_VectorItem]:
+    def _load_candidates(self, correct_kind: str) -> list[_VectorItem]:
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute(
                 f"""
                 SELECT doc_id, correct_kind, space_nm, sql_id, source_sql, generated_sql,
                        correct_sql, edited_yn, upd_ts, pattern_tags_json, embedding_json
                 FROM {self.table_name}
+                WHERE correct_kind = ?
                 ORDER BY upd_ts DESC
                 """,
+                ((correct_kind or "").strip().upper(),),
             ).fetchall()
 
         result: list[_VectorItem] = []

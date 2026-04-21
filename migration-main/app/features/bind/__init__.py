@@ -1,0 +1,2 @@
+"""Bind generation feature package."""
+

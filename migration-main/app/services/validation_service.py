@@ -1,20 +1,14 @@
-"""SQL 실행/검증 책임을 모아둔 서비스.
-
-이 모듈은 생성된 SQL을 DB에서 실제로 실행하기 직전에 다음을 보장한다.
-1) MyBatis 런타임 토큰이 남아 있지 않은지
-2) 다중 문장(SQL;SQL)이 아닌지
-3) Oracle 11g에서도 동작하도록 LIMIT/FETCH를 ROWNUM 형태로 보정했는지
-"""
+"""Database execution and validation helpers for generated SQL."""
 
 import re
 from typing import Any
 
-from app.db import get_connection
+from app.db import get_connection, split_table_owner_and_name
 from app.common import DBSqlError
+from app.common import MappingRuleItem
 
 
-# 실행 가능한 SQL에 남아 있으면 안 되는 토큰들.
-# LLM이 mapper 태그를 완전히 해소하지 못했는지 빠르게 탐지한다.
+# Runtime SQL must not contain unresolved mapper tags or bind placeholders.
 _FORBIDDEN_RUNTIME_TOKENS = (
     "<if",
     "<choose",
@@ -25,10 +19,43 @@ _FORBIDDEN_RUNTIME_TOKENS = (
     "#{",
     "${",
 )
+_TABLE_ALIAS_PATTERN = re.compile(
+    r"\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_$#\.]*|\"[^\"]+\")"
+    r"(?:\s+(?:AS\s+)?([A-Za-z_][A-Za-z0-9_$#]*|\"[^\"]+\"))?",
+    re.IGNORECASE,
+)
+_QUALIFIED_COLUMN_PATTERN = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_$#]*)\.([A-Za-z_][A-Za-z0-9_$#]*)\b"
+)
+_WITH_CTE_NAME_PATTERN = re.compile(
+    r"\bWITH\s+([A-Za-z_][A-Za-z0-9_$#]*)\s+AS\s*\(",
+    re.IGNORECASE,
+)
+_WITH_CTE_FOLLOWUP_PATTERN = re.compile(
+    r"\)\s*,\s*([A-Za-z_][A-Za-z0-9_$#]*)\s+AS\s*\(",
+    re.IGNORECASE,
+)
+_SQL_RESERVED_ALIAS_NAMES = {
+    "SELECT",
+    "WHERE",
+    "GROUP",
+    "ORDER",
+    "INNER",
+    "LEFT",
+    "RIGHT",
+    "FULL",
+    "CROSS",
+    "ON",
+    "UNION",
+    "FETCH",
+    "CONNECT",
+    "START",
+}
+_TABLE_COLUMNS_CACHE: dict[str, set[str]] = {}
 
 
 def _shorten_sql_for_log(sql_text: str, max_len: int = 700) -> str:
-    """로그 출력용으로 SQL 길이를 제한한다."""
+    """Collapse SQL to one line and truncate it for error logging."""
     one_line = re.sub(r"\s+", " ", (sql_text or "")).strip()
     if len(one_line) <= max_len:
         return one_line
@@ -36,11 +63,7 @@ def _shorten_sql_for_log(sql_text: str, max_len: int = 700) -> str:
 
 
 def execute_binding_query(binding_query_sql: str, max_rows: int = 20) -> list[dict[str, Any]]:
-    """bind 후보 값 추출 SQL을 실행한다.
-
-    반환 포맷:
-    - [{컬럼명: 값, ...}, ...]
-    """
+    """Execute bind-discovery SQL and return rows as dictionaries."""
     clean_sql = _prepare_runtime_sql(binding_query_sql, stage="EXECUTE_BIND_SQL")
     if not clean_sql:
         raise DBSqlError("Binding query SQL is empty.")
@@ -66,7 +89,7 @@ def execute_binding_query(binding_query_sql: str, max_rows: int = 20) -> list[di
 
 
 def execute_test_query(test_sql: str) -> list[dict[str, Any]]:
-    """검증용 테스트 SQL을 실행하고 전체 결과를 반환한다."""
+    """Execute validation SQL and return the full result set."""
     clean_sql = _prepare_runtime_sql(test_sql, stage="EXECUTE_TEST_SQL")
     if not clean_sql:
         raise DBSqlError("TEST SQL is empty.")
@@ -92,7 +115,7 @@ def execute_test_query(test_sql: str) -> list[dict[str, Any]]:
 
 
 def _to_int_or_none(value) -> int | None:
-    """숫자 비교용으로 값을 int로 변환한다. 실패하면 None."""
+    """Convert a value to `int`, returning `None` when conversion fails."""
     if value is None:
         return None
     try:
@@ -102,7 +125,7 @@ def _to_int_or_none(value) -> int | None:
 
 
 def _get_value_case_insensitive(row: dict[str, Any], key: str):
-    """DB 드라이버의 컬럼 대소문자 차이를 흡수해 값을 꺼낸다."""
+    """Read one row value without depending on Oracle column-name casing."""
     if key in row:
         return row[key]
     lowered = key.lower()
@@ -113,13 +136,7 @@ def _get_value_case_insensitive(row: dict[str, Any], key: str):
 
 
 def evaluate_status_from_test_rows(rows: list[dict[str, Any]]) -> str:
-    """테스트 결과를 PASS/FAIL로 판정한다.
-
-    판정 규칙:
-    - 필수 컬럼: CASE_NO, FROM_COUNT, TO_COUNT
-    - 모든 케이스에서 FROM_COUNT == TO_COUNT 이어야 PASS
-    - 0==0은 검증 실패로 본다(양쪽 모두 데이터 미존재)
-    """
+    """Translate test rows into a final PASS or FAIL status."""
     if not rows:
         return "FAIL"
 
@@ -150,13 +167,82 @@ def evaluate_status_from_test_rows(rows: list[dict[str, Any]]) -> str:
     return "PASS" if all_match else "FAIL"
 
 
+def collect_tobe_sql_column_coverage_issues(
+    tobe_sql: str,
+    mapping_rules: list[MappingRuleItem],
+) -> list[str]:
+    """Collect invalid table/column references in generated TOBE SQL."""
+    clean_sql = (tobe_sql or "").strip()
+    if not clean_sql:
+        return ["generated TOBE SQL is empty"]
+
+    allowed_columns_by_table = _build_allowed_columns_by_table(mapping_rules)
+    if not allowed_columns_by_table:
+        return []
+
+    alias_to_table = _extract_table_aliases(clean_sql)
+    if not alias_to_table:
+        return []
+
+    invalid_references: list[str] = []
+    seen_refs: set[tuple[str, str]] = set()
+    candidate_tables_by_column = _build_candidate_tables_by_column(allowed_columns_by_table)
+
+    for alias, column_name in _extract_qualified_columns(clean_sql):
+        normalized_alias = _normalize_identifier(alias)
+        normalized_column = _normalize_identifier(column_name)
+        if not normalized_alias or not normalized_column:
+            continue
+        target_table = alias_to_table.get(normalized_alias)
+        if not target_table:
+            continue
+
+        allowed_columns = allowed_columns_by_table.get(target_table)
+        if not allowed_columns or normalized_column in allowed_columns:
+            continue
+
+        ref_key = (target_table, normalized_column)
+        if ref_key in seen_refs:
+            continue
+        seen_refs.add(ref_key)
+
+        candidate_tables = [
+            table_name
+            for table_name in candidate_tables_by_column.get(normalized_column, [])
+            if table_name != target_table
+        ]
+        hint = (
+            f"invalid_reference={normalized_alias}.{normalized_column}; "
+            f"reason=column_not_in_table; table={target_table}; column={normalized_column}; "
+            f"candidate_target_tables={','.join(candidate_tables) if candidate_tables else 'none'}"
+        )
+        invalid_references.append(hint)
+        if len(invalid_references) >= 5:
+            break
+
+    return invalid_references
+
+
+def validate_tobe_sql_column_coverage(
+    tobe_sql: str,
+    mapping_rules: list[MappingRuleItem],
+) -> None:
+    """Fail fast wrapper retained for callers that want hard validation."""
+    invalid_references = collect_tobe_sql_column_coverage_issues(
+        tobe_sql=tobe_sql,
+        mapping_rules=mapping_rules,
+    )
+    if invalid_references:
+        raise DBSqlError("TOBE_SQL_COLUMN_COVERAGE_FAIL: " + " | ".join(invalid_references))
+
+
 def _prepare_runtime_sql(sql_text: str, stage: str) -> str:
-    """실행 전 SQL 정규화/안전 검사를 수행한다."""
+    """Normalize and validate SQL before it is executed against Oracle."""
     clean_sql = (sql_text or "").replace("\ufeff", "").strip().rstrip(";").strip()
     if not clean_sql:
         return clean_sql
 
-    # 실행 단계에서는 제한 구문을 Oracle 11g 친화적으로 바꾼다.
+    # Rewrite row-limiting syntax into an Oracle 11g-friendly form.
     if stage in {"EXECUTE_BIND_SQL", "EXECUTE_TEST_SQL"}:
         clean_sql = _normalize_select_row_limit(clean_sql)
 
@@ -173,8 +259,139 @@ def _prepare_runtime_sql(sql_text: str, stage: str) -> str:
     return clean_sql
 
 
+def _build_allowed_columns_by_table(mapping_rules: list[MappingRuleItem]) -> dict[str, set[str]]:
+    """Merge mapped target columns with live Oracle metadata when available."""
+    mapped_columns_by_table: dict[str, set[str]] = {}
+    for rule in mapping_rules or []:
+        table_name = _normalize_table_name(rule.to_table)
+        column_name = _normalize_identifier(rule.to_col)
+        if not table_name or not column_name:
+            continue
+        mapped_columns_by_table.setdefault(table_name, set()).add(column_name)
+
+    if not mapped_columns_by_table:
+        return {}
+
+    merged: dict[str, set[str]] = {}
+    for table_name, mapped_columns in mapped_columns_by_table.items():
+        runtime_columns = _load_table_columns(table_name)
+        merged[table_name] = runtime_columns if runtime_columns else set(mapped_columns)
+    return merged
+
+
+def _load_table_columns(table_name: str) -> set[str]:
+    """Load Oracle column names for one table, falling back silently when unavailable."""
+    normalized_table = _normalize_table_name(table_name)
+    if not normalized_table:
+        return set()
+    if normalized_table in _TABLE_COLUMNS_CACHE:
+        return _TABLE_COLUMNS_CACHE[normalized_table]
+
+    owner, bare_table = split_table_owner_and_name(normalized_table)
+    if owner:
+        query = """
+            SELECT COLUMN_NAME
+            FROM ALL_TAB_COLUMNS
+            WHERE OWNER = :1
+              AND TABLE_NAME = :2
+        """
+        params = [owner, bare_table]
+    else:
+        query = """
+            SELECT COLUMN_NAME
+            FROM USER_TAB_COLUMNS
+            WHERE TABLE_NAME = :1
+        """
+        params = [bare_table]
+
+    columns: set[str] = set()
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            for (column_name,) in cursor.fetchall():
+                normalized_column = _normalize_identifier(str(column_name))
+                if normalized_column:
+                    columns.add(normalized_column)
+    except Exception:
+        columns = set()
+
+    _TABLE_COLUMNS_CACHE[normalized_table] = columns
+    return columns
+
+
+def _extract_table_aliases(sql_text: str) -> dict[str, str]:
+    """Map SQL aliases back to the referenced target table names."""
+    cte_names = _extract_cte_names(sql_text)
+    alias_to_table: dict[str, str] = {}
+    for match in _TABLE_ALIAS_PATTERN.finditer(sql_text):
+        raw_table_name = match.group(1)
+        raw_alias = match.group(2)
+        table_name = _normalize_table_name(raw_table_name)
+        if not table_name or table_name in cte_names:
+            continue
+
+        alias = _normalize_identifier(raw_alias) if raw_alias else table_name
+        if not alias or alias in _SQL_RESERVED_ALIAS_NAMES:
+            alias = table_name
+        alias_to_table[alias] = table_name
+        alias_to_table.setdefault(table_name, table_name)
+    return alias_to_table
+
+
+def _extract_cte_names(sql_text: str) -> set[str]:
+    """Extract top-level CTE names so they are not mistaken for physical tables."""
+    names = { _normalize_identifier(match.group(1)) for match in _WITH_CTE_NAME_PATTERN.finditer(sql_text) }
+    for match in _WITH_CTE_FOLLOWUP_PATTERN.finditer(sql_text):
+        normalized = _normalize_identifier(match.group(1))
+        if normalized:
+            names.add(normalized)
+    return {name for name in names if name}
+
+
+def _extract_qualified_columns(sql_text: str) -> list[tuple[str, str]]:
+    """Return alias-qualified column references found in the SQL text."""
+    references: list[tuple[str, str]] = []
+    for match in _QUALIFIED_COLUMN_PATTERN.finditer(sql_text):
+        references.append((match.group(1), match.group(2)))
+    return references
+
+
+def _build_candidate_tables_by_column(
+    allowed_columns_by_table: dict[str, set[str]],
+) -> dict[str, list[str]]:
+    """Build reverse lookup from column name to candidate target tables."""
+    candidate_tables: dict[str, list[str]] = {}
+    for table_name, columns in allowed_columns_by_table.items():
+        for column_name in columns:
+            if column_name not in candidate_tables:
+                candidate_tables[column_name] = []
+            candidate_tables[column_name].append(table_name)
+    for tables in candidate_tables.values():
+        tables.sort()
+    return candidate_tables
+
+
+def _normalize_table_name(value: str) -> str:
+    """Normalize Oracle table names for case-insensitive comparison."""
+    normalized = _normalize_identifier(value)
+    if not normalized:
+        return ""
+    if "." in normalized:
+        return normalized.split(".")[-1]
+    return normalized
+
+
+def _normalize_identifier(value: str | None) -> str:
+    """Normalize one SQL identifier by stripping quotes and upper-casing it."""
+    clean = (value or "").strip()
+    if not clean:
+        return ""
+    return clean.strip('"').strip().upper()
+
+
 def _normalize_select_row_limit(sql_text: str) -> str:
-    """LIMIT/FETCH 문법을 Oracle 11g 호환 ROWNUM 래퍼로 치환한다."""
+    """Convert LIMIT/FETCH clauses into a ROWNUM wrapper for Oracle 11g."""
     text = sql_text.strip().rstrip(";")
 
     # LIMIT n -> SELECT * FROM (...) WHERE ROWNUM <= n
@@ -200,7 +417,7 @@ def _normalize_select_row_limit(sql_text: str) -> str:
 
 
 def _has_unquoted_semicolon(sql_text: str) -> bool:
-    """문자열 리터럴 밖의 세미콜론 존재 여부를 검사한다."""
+    """Return True when a semicolon exists outside string literals."""
     in_single_quote = False
     idx = 0
     length = len(sql_text)
@@ -208,7 +425,7 @@ def _has_unquoted_semicolon(sql_text: str) -> bool:
         ch = sql_text[idx]
         if in_single_quote:
             if ch == "'":
-                # Oracle 이스케이프('') 처리
+                # Oracle escaped quote: ''
                 if idx + 1 < length and sql_text[idx + 1] == "'":
                     idx += 2
                     continue
@@ -223,4 +440,3 @@ def _has_unquoted_semicolon(sql_text: str) -> bool:
             return True
         idx += 1
     return False
-

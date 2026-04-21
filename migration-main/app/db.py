@@ -11,6 +11,7 @@ _CLIENT_INITIALIZED = False
 
 
 def _get_required_env(name: str) -> str:
+    """Read one required environment variable or fail fast."""
     value = os.getenv(name)
     if not value:
         raise ValueError(f"Required environment variable '{name}' is not set.")
@@ -18,10 +19,12 @@ def _get_required_env(name: str) -> str:
 
 
 def get_oracle_schema() -> str:
+    """Return the optional Oracle schema prefix used for table qualification."""
     return (os.getenv("ORACLE_SCHEMA") or "").strip().upper()
 
 
 def qualify_table_name(table_name: str) -> str:
+    """Prefix a table name with the configured Oracle schema when needed."""
     schema = get_oracle_schema()
     clean_table = (table_name or "").strip()
     if not schema or not clean_table or "." in clean_table:
@@ -30,6 +33,7 @@ def qualify_table_name(table_name: str) -> str:
 
 
 def split_table_owner_and_name(table_name: str) -> tuple[str | None, str]:
+    """Split a possibly-qualified Oracle table name into owner and table name."""
     clean_table = (table_name or "").strip().upper()
     if "." in clean_table:
         owner, name = clean_table.split(".", 1)
@@ -39,6 +43,7 @@ def split_table_owner_and_name(table_name: str) -> tuple[str | None, str]:
 
 
 def get_connection():
+    """Create a live Oracle connection using the configured client and DSN."""
     global _CLIENT_INITIALIZED
 
     if not _CLIENT_INITIALIZED:
@@ -56,12 +61,20 @@ def get_connection():
 
 
 def get_mapping_rule_table() -> str:
+    """Return the fully-qualified mapping master table name."""
     return qualify_table_name("NEXT_MIG_INFO")
 
 
 def get_mapping_rule_detail_table() -> str:
+    """Return the fully-qualified mapping detail table name."""
     return qualify_table_name("NEXT_MIG_INFO_DTL")
 
 
 def get_result_table() -> str:
+    """Return the fully-qualified SQL migration result table name."""
     return qualify_table_name("NEXT_SQL_INFO")
+
+
+def get_migration_log_table() -> str:
+    """Return the fully-qualified migration log table name."""
+    return qualify_table_name("NEXT_MIG_LOG")

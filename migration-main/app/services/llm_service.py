@@ -23,6 +23,7 @@ load_dotenv(ROOT_DIR / ".env")
 _BIND_TOKEN_PATTERN = re.compile(r"[#$]\{\s*([^}]+?)\s*\}")
 
 
+# Prefer an explicit argument and fall back to the named environment variable.
 def _env_or_value(value: str | None, env_name: str) -> str:
     """함수 인자로 받은 값이 우선이며, 없으면 환경변수를 사용한다."""
     resolved = value or os.getenv(env_name)
@@ -31,6 +32,7 @@ def _env_or_value(value: str | None, env_name: str) -> str:
     return resolved
 
 
+# Normalize Anthropic-compatible endpoints down to the API root.
 def _normalize_anthropic_base_url(raw_base_url: str) -> str:
     """Anthropic endpoint??API root????????????????."""
     normalized = raw_base_url.strip().rstrip("/")
@@ -43,6 +45,7 @@ def _normalize_anthropic_base_url(raw_base_url: str) -> str:
     return normalized
 
 
+# Normalize OpenAI-compatible endpoints down to the API root.
 def _normalize_openai_base_url(raw_base_url: str) -> str:
     """OpenAI ?? gateway? root ?? /v1 ??? ???? ????."""
     normalized = raw_base_url.strip().rstrip("/")
@@ -52,6 +55,7 @@ def _normalize_openai_base_url(raw_base_url: str) -> str:
     return normalized
 
 
+# Resolve the provider explicitly or infer it from the base URL and model name.
 def _resolve_llm_provider(provider: str | None, base_url: str, model: str) -> str:
     resolved = (provider or os.getenv("LLM_PROVIDER") or "").strip().lower()
     if resolved:
@@ -66,6 +70,7 @@ def _resolve_llm_provider(provider: str | None, base_url: str, model: str) -> st
     return "openai"
 
 
+# Render mapping rules into a compact prompt-friendly text block.
 def _serialize_mapping_rules(mapping_rules: list[MappingRuleItem]) -> str:
     """프롬프트 주입용으로 매핑 룰을 사람이 읽기 쉬운 구조 텍스트로 직렬화한다."""
     if not mapping_rules:
@@ -104,6 +109,7 @@ def _serialize_mapping_rules(mapping_rules: list[MappingRuleItem]) -> str:
     return "\n".join(lines)
 
 
+# Normalize a table token into a case-insensitive comparison key.
 def _normalize_table_token(token: str) -> str:
     """테이블 토큰을 비교 가능한 형태(대문자, 스키마 제거)로 정규화한다."""
     value = (token or "").strip().strip('"').strip("'")
@@ -114,6 +120,7 @@ def _normalize_table_token(token: str) -> str:
     return value.upper()
 
 
+# Parse `job.target_table` from JSON, CSV, or whitespace-separated text.
 def _load_target_tables(job: SqlInfoJob) -> set[str]:
     """job.target_table(JSON/CSV/공백구분)를 테이블 집합으로 복원한다."""
     raw = (job.target_table or "").strip()
@@ -141,6 +148,7 @@ def _load_target_tables(job: SqlInfoJob) -> set[str]:
     return result
 
 
+# Find mapping-source tables that actually appear in the current source SQL.
 def _extract_referenced_fr_tables_from_source_sql(
     source_sql: str,
     candidate_fr_tables: set[str],
@@ -163,9 +171,11 @@ def _extract_referenced_fr_tables_from_source_sql(
     return matched
 
 
-def _select_mapping_rules_for_job(
+# Scope mapping rules to the subset relevant for the current job.
+def select_mapping_rules_for_job(
     job: SqlInfoJob,
     mapping_rules: list[MappingRuleItem],
+    fallback_to_all: bool = True,
 ) -> list[MappingRuleItem]:
     """현재 SQL에 필요한 매핑룰만 선별한다.
 
@@ -193,7 +203,7 @@ def _select_mapping_rules_for_job(
         )
 
     if not selected_fr_tables:
-        return mapping_rules
+        return mapping_rules if fallback_to_all else []
 
     filtered: list[MappingRuleItem] = []
     for fr_table in sorted(selected_fr_tables):
@@ -201,6 +211,7 @@ def _select_mapping_rules_for_job(
     return filtered
 
 
+# Serialize retrieved feedback examples for prompt injection.
 def _serialize_feedback_examples(feedback_examples: list[dict[str, str]]) -> str:
     """프롬프트 주입용으로 피드백 예시를 JSON 문자열로 직렬화한다."""
     if not feedback_examples:
@@ -208,6 +219,7 @@ def _serialize_feedback_examples(feedback_examples: list[dict[str, str]]) -> str
     return json.dumps(feedback_examples, ensure_ascii=False)
 
 
+# Build prompt messages for TO-BE SQL generation.
 def build_tobe_sql_messages(
     job: SqlInfoJob,
     mapping_rules: list[MappingRuleItem],
@@ -215,7 +227,7 @@ def build_tobe_sql_messages(
     feedback_examples: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     """TO-BE SQL 생성용 시스템 프롬프트를 만든다."""
-    scoped_rules = _select_mapping_rules_for_job(job=job, mapping_rules=mapping_rules)
+    scoped_rules = select_mapping_rules_for_job(job=job, mapping_rules=mapping_rules)
     merged_prompt = render_prompt(
         "tobe_sql_prompt.txt",
         from_sql=job.source_sql,
@@ -229,6 +241,7 @@ def build_tobe_sql_messages(
     ]
 
 
+# Build prompt messages for bind SQL generation.
 def build_bind_sql_messages(
     job: SqlInfoJob,
     tobe_sql: str,
@@ -251,21 +264,24 @@ def build_bind_sql_messages(
     ]
 
 
-def build_test_sql_messages(
+def build_tuning_sql_messages(
     job: SqlInfoJob,
     tobe_sql: str,
-    bind_set_json: str,
-    last_error: str | None = None,
-    feedback_examples: list[dict[str, str]] | None = None,
+    normalized_sql: str,
+    detected_rules_text: str,
+    tuning_context_text: str,
 ) -> list[dict[str, str]]:
-    """bind-aware 테스트 SQL 생성용 시스템 프롬프트를 만든다."""
+    """Build prompt messages for GOOD_SQL proposal generation."""
     merged_prompt = render_prompt(
-        "test_sql_prompt.txt",
+        "tuning_sql_prompt.txt",
+        space_nm=job.space_nm,
+        sql_id=job.sql_id,
+        tag_kind=job.tag_kind,
         from_sql=job.source_sql,
         tobe_sql=tobe_sql,
-        bind_set_json=bind_set_json,
-        feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
-        last_error=last_error or "None",
+        normalized_sql=normalized_sql,
+        detected_rules_text=detected_rules_text,
+        tuning_context_text=tuning_context_text,
     )
     return [
         {"role": "system", "content": merged_prompt},
@@ -273,26 +289,7 @@ def build_test_sql_messages(
     ]
 
 
-def build_test_sql_no_bind_messages(
-    job: SqlInfoJob,
-    tobe_sql: str,
-    last_error: str | None = None,
-    feedback_examples: list[dict[str, str]] | None = None,
-) -> list[dict[str, str]]:
-    """bind 파라미터가 없을 때 사용할 테스트 SQL 프롬프트를 만든다."""
-    merged_prompt = render_prompt(
-        "test_sql_no_bind_prompt.txt",
-        from_sql=job.source_sql,
-        tobe_sql=tobe_sql,
-        feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
-        last_error=last_error or "None",
-    )
-    return [
-        {"role": "system", "content": merged_prompt},
-        {"role": "user", "content": "Generate one executable Oracle SQL statement only."},
-    ]
-
-
+# Extract one executable SQL statement from the raw LLM response.
 def _extract_sql_text(response_text: str) -> str:
     """LLM 원문에서 실행 가능한 단일 SQL 본문만 추출한다."""
     text = response_text.strip()
@@ -313,6 +310,7 @@ def _extract_sql_text(response_text: str) -> str:
     return _normalize_oracle_sql(text)
 
 
+# Normalize dotted bind names such as `dto.id` down to `id`.
 def _normalize_bind_name(token: str) -> str:
     cleaned = (token or "").strip()
     if not cleaned:
@@ -320,6 +318,7 @@ def _normalize_bind_name(token: str) -> str:
     return cleaned.split(".")[-1].strip()
 
 
+# Render a Python value into an Oracle SQL literal.
 def _sql_literal(value) -> str:
     if value is None:
         return "NULL"
@@ -341,6 +340,7 @@ def _sql_literal(value) -> str:
     return f"'{escaped}'"
 
 
+# Replace bind tokens with deterministic literal values.
 def _render_sql_with_bind_values(sql_text: str, bind_case: dict[str, object]) -> str:
     def _replace(match: re.Match[str]) -> str:
         param_name = _normalize_bind_name(match.group(1))
@@ -349,9 +349,10 @@ def _render_sql_with_bind_values(sql_text: str, bind_case: dict[str, object]) ->
     return _BIND_TOKEN_PATTERN.sub(_replace, sql_text or "")
 
 
+# Build count-comparison test SQL without calling the LLM.
 def _build_deterministic_test_sql(
     from_sql: str,
-    tobe_sql: str,
+    to_sql: str,
     bind_sets: list[dict[str, object]],
 ) -> str:
     if not bind_sets:
@@ -360,7 +361,7 @@ def _build_deterministic_test_sql(
     selects: list[str] = []
     for idx, bind_case in enumerate(bind_sets, start=1):
         rendered_from = _render_sql_with_bind_values(from_sql, bind_case).strip()
-        rendered_to = _render_sql_with_bind_values(tobe_sql, bind_case).strip()
+        rendered_to = _render_sql_with_bind_values(to_sql, bind_case).strip()
         selects.append(
             "SELECT "
             f"{idx} AS CASE_NO, "
@@ -371,6 +372,7 @@ def _build_deterministic_test_sql(
     return " UNION ALL ".join(selects)
 
 
+# Drop SQL*Plus slash terminator lines from multi-line SQL text.
 def _strip_sqlplus_terminator_lines(lines: Iterable[str]) -> list[str]:
     """SQL*Plus 구분자(`/`) 라인을 제거한다."""
     cleaned = []
@@ -381,6 +383,7 @@ def _strip_sqlplus_terminator_lines(lines: Iterable[str]) -> list[str]:
     return cleaned
 
 
+# Convert trailing LIMIT syntax into a single-statement Oracle form.
 def _replace_limit_with_fetch_first(text: str) -> str:
     # LIMIT 절을 Oracle 친화적인 FETCH FIRST 절로 치환한다.
     return re.sub(
@@ -391,6 +394,7 @@ def _replace_limit_with_fetch_first(text: str) -> str:
     )
 
 
+# Normalize LLM output into one Oracle-executable SQL statement.
 def _normalize_oracle_sql(sql_text: str) -> str:
     """공백/종결자 정리 후 단일 문장 SQL 규칙을 강제한다."""
     text = sql_text.replace("\ufeff", "").replace("\u200b", "").replace("\u00a0", " ")
@@ -408,6 +412,7 @@ def _normalize_oracle_sql(sql_text: str) -> str:
     return text
 
 
+# Return True when a semicolon exists outside string literals.
 def _has_unquoted_semicolon(sql_text: str) -> bool:
     """문자열 리터럴 바깥의 세미콜론 존재 여부를 검사한다."""
     in_single_quote = False
@@ -434,6 +439,7 @@ def _has_unquoted_semicolon(sql_text: str) -> bool:
     return False
 
 
+# Convert simple role/content dicts into LangChain message objects.
 def _to_langchain_messages(messages: list[dict[str, str]]):
     """내부 메시지 포맷(dict)을 LangChain 메시지 객체로 변환한다."""
     converted = []
@@ -445,6 +451,7 @@ def _to_langchain_messages(messages: list[dict[str, str]]):
     return converted
 
 
+# Ensure Anthropic payloads always contain at least one user message.
 def _ensure_anthropic_message_requirements(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     """Anthropic 요구사항에 맞게 최소 1개의 user 메시지를 보장한다."""
     safe = list(messages or [])
@@ -454,6 +461,7 @@ def _ensure_anthropic_message_requirements(messages: list[dict[str, str]]) -> li
     return safe
 
 
+# Call the configured LLM endpoint and return normalized SQL text.
 def call_llm_api(
     api_key: str | None,
     model: str | None,
@@ -509,6 +517,60 @@ def call_llm_api(
         raise
 
 
+def call_llm_text_api(
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+    messages: list[dict[str, str]],
+    provider: str | None = None,
+) -> str:
+    """Call the configured LLM endpoint and return plain text without SQL normalization."""
+    resolved_api_key = _env_or_value(api_key, "LLM_API_KEY")
+    resolved_model = _env_or_value(model, "LLM_MODEL")
+    raw_base_url = _env_or_value(base_url, "LLM_BASE_URL")
+    resolved_provider = _resolve_llm_provider(
+        provider=provider,
+        base_url=raw_base_url,
+        model=resolved_model,
+    )
+    try:
+        if resolved_provider == "anthropic":
+            llm = ChatAnthropic(
+                anthropic_api_key=resolved_api_key,
+                model=resolved_model,
+                anthropic_api_url=_normalize_anthropic_base_url(raw_base_url),
+                temperature=0,
+            )
+            safe_messages = _ensure_anthropic_message_requirements(messages)
+        else:
+            llm = ChatOpenAI(
+                api_key=resolved_api_key,
+                model=resolved_model,
+                base_url=_normalize_openai_base_url(raw_base_url),
+                temperature=0,
+            )
+            safe_messages = list(messages or [])
+
+        response = llm.invoke(_to_langchain_messages(safe_messages))
+        content = getattr(response, "content", response)
+        if isinstance(content, list):
+            return "".join(item.get("text", "") if isinstance(item, dict) else str(item) for item in content).strip()
+        return str(content).strip()
+    except Exception as exc:
+        msg = str(exc)
+        lowered = msg.lower()
+        if (
+            "429" in msg
+            or "rate limit" in lowered
+            or "504" in msg
+            or "gateway timeout" in lowered
+            or "timed out" in lowered
+        ):
+            raise LLMRateLimitError(msg) from exc
+        raise
+
+
+# Public entry point for TO-BE SQL generation.
 def generate_tobe_sql(
     job: SqlInfoJob,
     mapping_rules: list[MappingRuleItem],
@@ -529,6 +591,7 @@ def generate_tobe_sql(
     )
 
 
+# Public entry point for bind SQL generation.
 def generate_bind_sql(
     job: SqlInfoJob,
     tobe_sql: str,
@@ -549,12 +612,11 @@ def generate_bind_sql(
     )
 
 
+# Public entry point for deterministic test SQL generation.
 def generate_test_sql(
     job: SqlInfoJob,
     tobe_sql: str,
     bind_set_json: str,
-    last_error: str | None = None,
-    feedback_examples: list[dict[str, str]] | None = None,
 ) -> str:
     """bind-aware 시나리오용 테스트 SQL 생성 진입점."""
     try:
@@ -566,11 +628,46 @@ def generate_test_sql(
     return _build_deterministic_test_sql(job.source_sql, tobe_sql, bind_sets)
 
 
+# Public entry point for deterministic no-bind test SQL generation.
 def generate_test_sql_no_bind(
     job: SqlInfoJob,
     tobe_sql: str,
-    last_error: str | None = None,
-    feedback_examples: list[dict[str, str]] | None = None,
 ) -> str:
-    """no-bind 시나리오용 테스트 SQL 생성 진입점."""
     return _build_deterministic_test_sql(job.source_sql, tobe_sql, [{}])
+
+
+def generate_comparison_test_sql(
+    left_sql: str,
+    right_sql: str,
+    bind_set_json: str | None = None,
+) -> str:
+    """Build deterministic count-comparison SQL for any two SQL statements."""
+    try:
+        bind_sets = json.loads(bind_set_json or "[]")
+    except Exception:
+        bind_sets = []
+    if not isinstance(bind_sets, list):
+        bind_sets = []
+    return _build_deterministic_test_sql(left_sql, right_sql, bind_sets or [{}])
+
+
+def generate_good_sql(
+    job: SqlInfoJob,
+    tobe_sql: str,
+    normalized_sql: str,
+    detected_rules_text: str,
+    tuning_context_text: str,
+) -> str:
+    """Generate one GOOD_SQL proposal from a verified TOBE SQL."""
+    return call_llm_api(
+        api_key=None,
+        model=None,
+        base_url=None,
+        messages=build_tuning_sql_messages(
+            job=job,
+            tobe_sql=tobe_sql,
+            normalized_sql=normalized_sql,
+            detected_rules_text=detected_rules_text,
+            tuning_context_text=tuning_context_text,
+        ),
+    )

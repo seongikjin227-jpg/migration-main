@@ -1,15 +1,15 @@
-"""매핑 룰 조회 리포지토리."""
+"""Mapping rule repository."""
 
+from app.common import MappingRuleItem
 from app.db import (
     get_connection,
     get_mapping_rule_detail_table,
     get_mapping_rule_table,
 )
-from app.common import MappingRuleItem
 
 
 def _to_text(value, default: str = "") -> str:
-    """DB 드라이버 값(LOB 포함)을 문자열로 정규화한다."""
+    """Convert Oracle values and LOBs into plain text."""
     if value is None:
         return default
     if hasattr(value, "read"):
@@ -22,11 +22,11 @@ def _to_text(value, default: str = "") -> str:
 
 
 def get_all_mapping_rules() -> list[MappingRuleItem]:
-    """NEXT_MIG_INFO + DTL 조인으로 전체 매핑 룰을 읽어온다."""
+    """Load mapping rules from NEXT_MIG_INFO + NEXT_MIG_INFO_DTL."""
     map_table = get_mapping_rule_table()
     detail_table = get_mapping_rule_detail_table()
     query = f"""
-        SELECT M.FR_TABLE, D.FR_COL, M.TO_TABLE, D.TO_COL
+        SELECT M.MAP_ID, M.FR_TABLE, D.FR_COL, M.TO_TABLE, D.TO_COL
         FROM {map_table} M
         JOIN {detail_table} D
           ON M.MAP_ID = D.MAP_ID
@@ -41,10 +41,11 @@ def get_all_mapping_rules() -> list[MappingRuleItem]:
             rules.append(
                 MappingRuleItem(
                     map_type="",
-                    fr_table=_to_text(row[0]),
-                    fr_col=_to_text(row[1]),
-                    to_table=_to_text(row[2]),
-                    to_col=_to_text(row[3]),
+                    fr_table=_to_text(row[1]),
+                    fr_col=_to_text(row[2]),
+                    to_table=_to_text(row[3]),
+                    to_col=_to_text(row[4]),
+                    map_id=_to_text(row[0]),
                 )
             )
     return rules
