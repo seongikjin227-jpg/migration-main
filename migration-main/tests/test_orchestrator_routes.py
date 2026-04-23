@@ -10,11 +10,11 @@ from app.flows.job_flow import (
     NODE_ABORT_ON_STOP,
     NODE_DETECT_BIND_PARAMS,
     NODE_GENERATE_BIND_SQL,
+    NODE_GENERATE_TOBE_SQL,
     NODE_GENERATE_TEST_SQL,
     NODE_LOAD_TUNING_CONTEXT,
     NODE_LOAD_BIND_FEEDBACK,
     NODE_LOAD_MAPPING_RULES,
-    NODE_LOAD_TOBE_FEEDBACK,
     NODE_PERSIST_FAILURE,
     NODE_PERSIST_TUNING_RESULT,
     NODE_PREPARE_RETRY,
@@ -38,7 +38,7 @@ class MigrationOrchestratorRouteTests(unittest.TestCase):
     def test_standard_route_uses_retry_when_stage_failed(self) -> None:
         next_node = self.orchestrator._route_after_standard_stage(
             {"stop_requested": False, "stage_error": True},
-            success_node=NODE_LOAD_TOBE_FEEDBACK,
+            success_node=NODE_GENERATE_TOBE_SQL,
         )
         self.assertEqual(next_node, NODE_PREPARE_RETRY)
 

@@ -2,7 +2,7 @@
 
 from app.services.binding_service import bind_sets_to_json, build_bind_sets, extract_bind_param_names
 from app.services.llm_service import generate_bind_sql
-from app.features.rag.feedback_rag_service import feedback_rag_service
+from app.features.rag.bind_rag_service import bind_rag_service
 from app.services.validation_service import execute_binding_query
 
 
@@ -13,9 +13,8 @@ def detect_bind_param_names(tobe_sql: str, source_sql: str) -> list[str]:
 
 def load_bind_feedback_examples(job, tobe_sql: str, last_error: str | None, current_stage: str) -> list[dict[str, str]]:
     """Retrieve bind-stage RAG examples."""
-    return feedback_rag_service.retrieve_feedback_examples(
+    return bind_rag_service.retrieve_bind_examples(
         job=job,
-        correct_kind="BIND",
         last_error=last_error,
         tobe_sql=tobe_sql,
         current_stage=current_stage,

@@ -51,16 +51,15 @@ class SqlInfoJob:
     bind_sql: Optional[str] = None
     bind_set: Optional[str] = None
     test_sql: Optional[str] = None
-    good_sql: Optional[str] = None
-    good_test_sql: Optional[str] = None
+    tuned_sql: Optional[str] = None
+    tuned_test_sql: Optional[str] = None
     tuning_status: Optional[str] = None
     status: Optional[str] = None
     log_text: Optional[str] = None
     upd_ts: Optional[datetime] = None
     edited_yn: Optional[str] = None
-    tobe_correct_sql: Optional[str] = None
     bind_correct_sql: Optional[str] = None
-    test_correct_sql: Optional[str] = None
+    block_rag_content: Optional[str] = None
 
     @property
     def source_sql(self) -> str:

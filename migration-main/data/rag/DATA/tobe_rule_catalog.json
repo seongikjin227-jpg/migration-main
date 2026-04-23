@@ -1,0 +1,279 @@
+{
+  "rules": [
+    {
+      "rule_id": "RULE_J001",
+      "guidance": [
+        "ANSI JOIN으로 변환한다.",
+        "outer join 의미를 유지한다.",
+        "join predicate는 ON 절에 둔다."
+      ],
+      "example_bad_sql": "SELECT E.EMPNO, D.DNAME FROM EMP E, DEPT D WHERE E.DEPTNO = D.DEPTNO(+)",
+      "example_tuned_sql": "SELECT E.EMPNO, D.DNAME FROM EMP E LEFT JOIN DEPT D ON E.DEPTNO = D.DEPTNO"
+    },
+    {
+      "rule_id": "RULE_J002",
+      "guidance": [
+        "table 간 연결 조건은 ON 절로 이동한다.",
+        "row filtering 조건은 WHERE 절에 남긴다.",
+        "join 조건과 filter 조건을 섞지 않는다."
+      ],
+      "example_bad_sql": "SELECT E.EMPNO, D.DNAME FROM EMP E, DEPT D WHERE E.DEPTNO = D.DEPTNO AND D.LOC = 'SEOUL'",
+      "example_tuned_sql": "SELECT E.EMPNO, D.DNAME FROM EMP E JOIN DEPT D ON E.DEPTNO = D.DEPTNO WHERE D.LOC = 'SEOUL'"
+    },
+    {
+      "rule_id": "RULE_J003",
+      "guidance": [
+        "DISTINCT를 바로 제거하지 않는다.",
+        "중복을 유발하는 join 경로를 먼저 점검한다.",
+        "필요 시 보수적인 후보만 제안한다."
+      ],
+      "example_bad_sql": "SELECT DISTINCT E.EMPNO FROM EMP E JOIN BONUS B ON E.EMPNO = B.EMPNO JOIN BONUS_HIST H ON B.EMPNO = H.EMPNO",
+      "example_tuned_sql": "SELECT DISTINCT E.EMPNO FROM EMP E JOIN BONUS B ON E.EMPNO = B.EMPNO JOIN BONUS_HIST H ON B.EMPNO = H.EMPNO"
+    },
+    {
+      "rule_id": "RULE_J004",
+      "guidance": [
+        "join predicate 누락 여부를 우선 점검한다.",
+        "의도되지 않은 CROSS JOIN이면 보수적으로 수정한다.",
+        "의미가 불명확하면 과도한 rewrite를 피한다."
+      ],
+      "example_bad_sql": "SELECT E.EMPNO, D.DNAME FROM EMP E, DEPT D WHERE E.SAL > 1000",
+      "example_tuned_sql": "SELECT E.EMPNO, D.DNAME FROM EMP E CROSS JOIN DEPT D WHERE E.SAL > 1000"
+    },
+    {
+      "rule_id": "RULE_J005",
+      "guidance": [
+        "projection과 predicate에서 실제 사용된 alias를 확인한다.",
+        "불필요한 join 제거는 보수적으로 판단한다."
+      ],
+      "example_bad_sql": "SELECT E.EMPNO FROM EMP E JOIN DEPT D ON E.DEPTNO = D.DEPTNO",
+      "example_tuned_sql": "SELECT E.EMPNO FROM EMP E JOIN DEPT D ON E.DEPTNO = D.DEPTNO"
+    },
+    {
+      "rule_id": "RULE_P001",
+      "guidance": [
+        "pagination에는 안정적인 ORDER BY가 필요하다.",
+        "정렬 기준이 없으면 보수적으로 후보만 제안한다."
+      ],
+      "example_bad_sql": "SELECT EMPNO, ENAME FROM EMP FETCH FIRST 20 ROWS ONLY",
+      "example_tuned_sql": "SELECT EMPNO, ENAME FROM EMP FETCH FIRST 20 ROWS ONLY"
+    },
+    {
+      "rule_id": "RULE_P002",
+      "guidance": [
+        "비고유 정렬키에는 tie-breaker를 추가한다.",
+        "가능하면 unique key를 보조 정렬로 사용한다."
+      ],
+      "example_bad_sql": "SELECT EMPNO, ENAME, SAL FROM EMP ORDER BY SAL FETCH FIRST 20 ROWS ONLY",
+      "example_tuned_sql": "SELECT EMPNO, ENAME, SAL FROM EMP ORDER BY SAL, EMPNO FETCH FIRST 20 ROWS ONLY"
+    },
+    {
+      "rule_id": "RULE_P003",
+      "guidance": [
+        "ROWNUM 기반 제한은 표준 pagination으로 정리한다.",
+        "정렬이 필요하면 ORDER BY와 함께 유지한다."
+      ],
+      "example_bad_sql": "SELECT EMPNO FROM EMP WHERE ROWNUM <= 10 ORDER BY EMPNO",
+      "example_tuned_sql": "SELECT EMPNO FROM EMP ORDER BY EMPNO FETCH FIRST 10 ROWS ONLY"
+    },
+    {
+      "rule_id": "RULE_C001",
+      "guidance": [
+        "문자열 결합 스타일을 일관되게 유지한다."
+      ],
+      "example_bad_sql": "SELECT ENAME || '-' || JOB AS EMP_LABEL FROM EMP",
+      "example_tuned_sql": "SELECT CONCAT(ENAME, CONCAT('-', JOB)) AS EMP_LABEL FROM EMP"
+    },
+    {
+      "rule_id": "RULE_C002",
+      "guidance": [
+        "nullable 컬럼 결합에는 COALESCE를 고려한다."
+      ],
+      "example_bad_sql": "SELECT FIRST_NAME || ' ' || MIDDLE_NAME || ' ' || LAST_NAME AS FULL_NAME FROM EMP_PROFILE",
+      "example_tuned_sql": "SELECT CONCAT(COALESCE(FIRST_NAME, ''), CONCAT(' ', CONCAT(COALESCE(MIDDLE_NAME, ''), CONCAT(' ', COALESCE(LAST_NAME, ''))))) AS FULL_NAME FROM EMP_PROFILE"
+    },
+    {
+      "rule_id": "RULE_C003",
+      "guidance": [
+        "WHERE 절의 CONCAT 사용은 보수적으로 다룬다."
+      ],
+      "example_bad_sql": "SELECT EMPNO FROM EMP WHERE ENAME || JOB = 'SMITHCLERK'",
+      "example_tuned_sql": "SELECT EMPNO FROM EMP WHERE CONCAT(ENAME, JOB) = 'SMITHCLERK'"
+    },
+    {
+      "rule_id": "RULE_C004",
+      "guidance": [
+        "비교 목적의 과도한 문자열 변환을 줄인다."
+      ],
+      "example_bad_sql": "SELECT EMPNO FROM EMP WHERE TO_CHAR(HIREDATE, 'YYYYMMDD') = '20240101'",
+      "example_tuned_sql": "SELECT EMPNO FROM EMP WHERE CAST(HIREDATE AS DATE) = DATE '2024-01-01'"
+    },
+    {
+      "rule_id": "RULE_F001",
+      "guidance": [
+        "함수로 감싼 predicate는 성능 관점에서 점검한다."
+      ],
+      "example_bad_sql": "SELECT EMPNO, ENAME FROM EMP WHERE UPPER(ENAME) = 'SMITH'",
+      "example_tuned_sql": "SELECT EMPNO, ENAME FROM EMP WHERE UPPER(ENAME) = 'SMITH'"
+    },
+    {
+      "rule_id": "RULE_F002",
+      "guidance": [
+        "중복 predicate는 제거한다."
+      ],
+      "example_bad_sql": "SELECT EMPNO FROM EMP WHERE DEPTNO = 10 AND DEPTNO = 10",
+      "example_tuned_sql": "SELECT EMPNO FROM EMP WHERE DEPTNO = 10"
+    },
+    {
+      "rule_id": "RULE_F003",
+      "guidance": [
+        "항상 참/거짓인 predicate는 제거한다."
+      ],
+      "example_bad_sql": "SELECT EMPNO FROM EMP WHERE 1 = 1 AND DEPTNO = 10",
+      "example_tuned_sql": "SELECT EMPNO FROM EMP WHERE DEPTNO = 10"
+    },
+    {
+      "rule_id": "RULE_F004",
+      "guidance": [
+        "NOT IN의 NULL 위험을 점검한다.",
+        "필요 시 NOT EXISTS 대안을 제안한다."
+      ],
+      "example_bad_sql": "SELECT EMPNO FROM EMP WHERE DEPTNO NOT IN (SELECT DEPTNO FROM DEPT_FILTER)",
+      "example_tuned_sql": "SELECT EMPNO FROM EMP WHERE NOT EXISTS (SELECT 1 FROM DEPT_FILTER DF WHERE DF.DEPTNO = EMP.DEPTNO)"
+    },
+    {
+      "rule_id": "RULE_F005",
+      "guidance": [
+        "IN-subquery는 EXISTS 또는 JOIN 전환을 검토한다."
+      ],
+      "example_bad_sql": "SELECT EMPNO FROM EMP WHERE DEPTNO IN (SELECT DEPTNO FROM DEPT WHERE ACTIVE_YN = 'Y')",
+      "example_tuned_sql": "SELECT E.EMPNO FROM EMP E WHERE EXISTS (SELECT 1 FROM DEPT D WHERE D.DEPTNO = E.DEPTNO AND D.ACTIVE_YN = 'Y')"
+    },
+    {
+      "rule_id": "RULE_S001",
+      "guidance": [
+        "trivial subquery는 평탄화한다."
+      ],
+      "example_bad_sql": "SELECT * FROM (SELECT EMPNO, ENAME FROM EMP) E",
+      "example_tuned_sql": "SELECT EMPNO, ENAME FROM EMP"
+    },
+    {
+      "rule_id": "RULE_S002",
+      "guidance": [
+        "과도한 nested 구조를 완화한다."
+      ],
+      "example_bad_sql": "SELECT * FROM (SELECT * FROM (SELECT EMPNO, DEPTNO FROM EMP WHERE DEPTNO IN (SELECT DEPTNO FROM DEPT WHERE LOC = 'SEOUL'))) X",
+      "example_tuned_sql": "SELECT EMPNO, DEPTNO FROM EMP WHERE DEPTNO IN (SELECT DEPTNO FROM DEPT WHERE LOC = 'SEOUL')"
+    },
+    {
+      "rule_id": "RULE_S003",
+      "guidance": [
+        "correlated subquery는 join이나 집계 서브쿼리 대안을 검토한다."
+      ],
+      "example_bad_sql": "SELECT E.EMPNO FROM EMP E WHERE E.SAL > (SELECT AVG(SAL) FROM EMP X WHERE X.DEPTNO = E.DEPTNO)",
+      "example_tuned_sql": "SELECT E.EMPNO FROM EMP E JOIN (SELECT DEPTNO, AVG(SAL) AS AVG_SAL FROM EMP GROUP BY DEPTNO) X ON E.DEPTNO = X.DEPTNO WHERE E.SAL > X.AVG_SAL"
+    },
+    {
+      "rule_id": "RULE_S004",
+      "guidance": [
+        "재사용되지 않는 trivial CTE는 단순화 후보로 본다."
+      ],
+      "example_bad_sql": "WITH E1 AS (SELECT EMPNO, DEPTNO FROM EMP), E2 AS (SELECT * FROM E1) SELECT * FROM E2",
+      "example_tuned_sql": "SELECT EMPNO, DEPTNO FROM EMP"
+    },
+    {
+      "rule_id": "RULE_A001",
+      "guidance": [
+        "DISTINCT와 GROUP BY의 중복 사용은 보수적으로 판단한다."
+      ],
+      "example_bad_sql": "SELECT DISTINCT DEPTNO, COUNT(*) FROM EMP GROUP BY DEPTNO",
+      "example_tuned_sql": "SELECT DISTINCT DEPTNO, COUNT(*) FROM EMP GROUP BY DEPTNO"
+    },
+    {
+      "rule_id": "RULE_A002",
+      "guidance": [
+        "집계와 무관한 HAVING 조건은 WHERE로 이동을 검토한다."
+      ],
+      "example_bad_sql": "SELECT DEPTNO, COUNT(*) FROM EMP GROUP BY DEPTNO HAVING DEPTNO = 10",
+      "example_tuned_sql": "SELECT DEPTNO, COUNT(*) FROM EMP WHERE DEPTNO = 10 GROUP BY DEPTNO"
+    },
+    {
+      "rule_id": "RULE_A003",
+      "guidance": [
+        "집계 전 join 폭증 가능성은 보수적으로 다룬다."
+      ],
+      "example_bad_sql": "SELECT D.DEPTNO, COUNT(*) FROM DEPT D JOIN EMP E ON D.DEPTNO = E.DEPTNO JOIN EMP_BONUS B ON E.EMPNO = B.EMPNO GROUP BY D.DEPTNO",
+      "example_tuned_sql": "SELECT D.DEPTNO, COUNT(*) FROM DEPT D JOIN EMP E ON D.DEPTNO = E.DEPTNO JOIN EMP_BONUS B ON E.EMPNO = B.EMPNO GROUP BY D.DEPTNO"
+    },
+    {
+      "rule_id": "RULE_R001",
+      "guidance": [
+        "SELECT *는 가능하면 명시 컬럼으로 치환한다."
+      ],
+      "example_bad_sql": "SELECT * FROM EMP",
+      "example_tuned_sql": "SELECT EMPNO, ENAME, JOB, MGR, HIREDATE, SAL, COMM, DEPTNO FROM EMP"
+    },
+    {
+      "rule_id": "RULE_R002",
+      "guidance": [
+        "alias는 일관되게 사용한다.",
+        "projection alias를 명확히 표기한다."
+      ],
+      "example_bad_sql": "SELECT E.EMPNO A, E.ENAME FROM EMP E",
+      "example_tuned_sql": "SELECT E.EMPNO AS EMPNO, E.ENAME AS ENAME FROM EMP E"
+    },
+    {
+      "rule_id": "RULE_R003",
+      "guidance": [
+        "내부 subquery의 불필요한 ORDER BY는 제거한다."
+      ],
+      "example_bad_sql": "SELECT * FROM (SELECT EMPNO, ENAME FROM EMP ORDER BY ENAME) X",
+      "example_tuned_sql": "SELECT EMPNO, ENAME FROM EMP"
+    },
+    {
+      "rule_id": "RULE_R004",
+      "guidance": [
+        "중복 CAST를 제거한다."
+      ],
+      "example_bad_sql": "SELECT CAST(CAST(SAL AS NUMBER) AS NUMBER) AS SALARY FROM EMP",
+      "example_tuned_sql": "SELECT CAST(SAL AS NUMBER) AS SALARY FROM EMP"
+    },
+    {
+      "rule_id": "RULE_VM001",
+      "guidance": [
+        "inline view가 단순 projection/join 용도라면 base table join으로 풀어서 view merging이 가능하게 만든다.",
+        "outer filter와 inner join predicate를 한 번에 재배치해 optimizer가 더 많은 access path를 검토하게 한다."
+      ],
+      "example_bad_sql": "SELECT e.first_name, e.last_name, dept_locs_v.street_address, dept_locs_v.postal_code FROM employee e, (SELECT d.department_id, d.department_name, l.street_address, l.postal_code FROM departments d, locations l WHERE d.location_id = l.location_id) dept_locs_v WHERE dept_locs_v.department_id = e.department_id AND e.last_name = 'Smith'",
+      "example_tuned_sql": "SELECT e.first_name, e.last_name, l.street_address, l.postal_code FROM employee e, departments d, locations l WHERE d.location_id = l.location_id AND d.department_id = e.department_id AND e.last_name = 'Smith'"
+    },
+    {
+      "rule_id": "RULE_VM002",
+      "guidance": [
+        "서브쿼리 안쪽의 inline view도 단순 중첩이면 평탄화해서 최종 join graph를 단순화한다.",
+        "view merging 이후 outer predicate가 필요한 위치로 자연스럽게 내려가도록 구조를 정리한다."
+      ],
+      "example_bad_sql": "SELECT outer_q.first_name, outer_q.last_name, outer_q.street_address, outer_q.postal_code FROM (SELECT e.employee_id, e.first_name, e.last_name, dept_locs_v.street_address, dept_locs_v.postal_code FROM employee e, (SELECT d.department_id, l.street_address, l.postal_code FROM departments d, locations l WHERE d.location_id = l.location_id) dept_locs_v WHERE dept_locs_v.department_id = e.department_id) outer_q WHERE outer_q.last_name = 'Smith'",
+      "example_tuned_sql": "SELECT e.first_name, e.last_name, l.street_address, l.postal_code FROM employee e, departments d, locations l WHERE d.location_id = l.location_id AND d.department_id = e.department_id AND e.last_name = 'Smith'"
+    },
+    {
+      "rule_id": "RULE_VM003",
+      "guidance": [
+        "조인이 더 길어져도 불필요한 inline view는 유지하지 말고 base table join으로 펼친다.",
+        "필터와 조인 조건을 명시적으로 드러내 optimizer가 더 다양한 실행 경로를 조사할 수 있게 한다."
+      ],
+      "example_bad_sql": "SELECT e.employee_id, e.first_name, e.last_name, dept_locs_v.department_name, dept_locs_v.city, dept_locs_v.street_address, dept_locs_v.postal_code, j.job_title FROM employee e, jobs j, (SELECT d.department_id, d.department_name, l.city, l.street_address, l.postal_code FROM departments d, locations l WHERE d.location_id = l.location_id) dept_locs_v WHERE e.job_id = j.job_id AND dept_locs_v.department_id = e.department_id AND e.status = 'ACTIVE' AND e.last_name LIKE 'Sm%'",
+      "example_tuned_sql": "SELECT e.employee_id, e.first_name, e.last_name, d.department_name, l.city, l.street_address, l.postal_code, j.job_title FROM employee e, jobs j, departments d, locations l WHERE e.job_id = j.job_id AND d.location_id = l.location_id AND d.department_id = e.department_id AND e.status = 'ACTIVE' AND e.last_name LIKE 'Sm%'"
+    }
+    ,
+    {
+      "rule_id": "RULE_VM004",
+      "guidance": [
+        "IN-subquery는 block 단위로 unnest해서 parent block join predicate로 끌어올린다.",
+        "subquery가 단일 key projection이면 selected key와 parent filter를 join 형태로 재배치한다."
+      ],
+      "example_bad_sql": "SELECT sales.* FROM sales WHERE sales.cust_id IN (SELECT customers.cust_id FROM customers WHERE customers.active_yn = 'Y')",
+      "example_tuned_sql": "SELECT sales.* FROM sales, customers WHERE sales.cust_id = customers.cust_id AND customers.active_yn = 'Y'"
+    }
+  ]
+}

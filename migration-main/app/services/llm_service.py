@@ -14,6 +14,7 @@ from langchain_openai import ChatOpenAI
 
 from app.common import LLMRateLimitError
 from app.common import MappingRuleItem, SqlInfoJob
+from app.features.tobe.tobe_block_rag_flow import build_tobe_block_rag_context
 from app.services.binding_service import build_bind_target_hints
 from app.services.prompt_service import render_prompt
 
@@ -112,7 +113,7 @@ def _serialize_mapping_rules(mapping_rules: list[MappingRuleItem]) -> str:
 # Normalize a table token into a case-insensitive comparison key.
 def _normalize_table_token(token: str) -> str:
     """테이블 토큰을 비교 가능한 형태(대문자, 스키마 제거)로 정규화한다."""
-    value = (token or "").strip().strip('"').strip("'")
+    value = (token or "").strip().strip('"').strip("'").strip("[]{}()")
     if not value:
         return ""
     if "." in value:
@@ -138,7 +139,7 @@ def _load_target_tables(job: SqlInfoJob) -> set[str]:
         except Exception:
             tokens = []
     if not tokens:
-        tokens = re.split(r"[,\s;|]+", raw)
+        tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_$#\.]*", raw)
 
     result: set[str] = set()
     for token in tokens:
@@ -196,11 +197,10 @@ def select_mapping_rules_for_job(
     target_tables = _load_target_tables(job)
     selected_fr_tables = {tbl for tbl in target_tables if tbl in rules_by_fr}
 
-    if not selected_fr_tables:
-        selected_fr_tables = _extract_referenced_fr_tables_from_source_sql(
-            source_sql=job.source_sql,
-            candidate_fr_tables=set(rules_by_fr.keys()),
-        )
+    selected_fr_tables |= _extract_referenced_fr_tables_from_source_sql(
+        source_sql=job.source_sql,
+        candidate_fr_tables=set(rules_by_fr.keys()),
+    )
 
     if not selected_fr_tables:
         return mapping_rules if fallback_to_all else []
@@ -224,7 +224,6 @@ def build_tobe_sql_messages(
     job: SqlInfoJob,
     mapping_rules: list[MappingRuleItem],
     last_error: str | None = None,
-    feedback_examples: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     """TO-BE SQL 생성용 시스템 프롬프트를 만든다."""
     scoped_rules = select_mapping_rules_for_job(job=job, mapping_rules=mapping_rules)
@@ -232,7 +231,7 @@ def build_tobe_sql_messages(
         "tobe_sql_prompt.txt",
         from_sql=job.source_sql,
         mapping_schema_text=_serialize_mapping_rules(scoped_rules),
-        feedback_examples_json=_serialize_feedback_examples(feedback_examples or []),
+        block_rag_context_json=build_tobe_block_rag_context(job.source_sql),
         last_error=last_error or "None",
     )
     return [
@@ -267,11 +266,11 @@ def build_bind_sql_messages(
 def build_tuning_sql_messages(
     job: SqlInfoJob,
     tobe_sql: str,
-    normalized_sql: str,
-    detected_rules_text: str,
+    top_rules_json: str,
+    support_case_json: str,
     tuning_context_text: str,
 ) -> list[dict[str, str]]:
-    """Build prompt messages for GOOD_SQL proposal generation."""
+    """Build prompt messages for TUNED_SQL proposal generation."""
     merged_prompt = render_prompt(
         "tuning_sql_prompt.txt",
         space_nm=job.space_nm,
@@ -279,8 +278,8 @@ def build_tuning_sql_messages(
         tag_kind=job.tag_kind,
         from_sql=job.source_sql,
         tobe_sql=tobe_sql,
-        normalized_sql=normalized_sql,
-        detected_rules_text=detected_rules_text,
+        top_rules_json=top_rules_json,
+        support_case_json=support_case_json,
         tuning_context_text=tuning_context_text,
     )
     return [
@@ -349,6 +348,15 @@ def _render_sql_with_bind_values(sql_text: str, bind_case: dict[str, object]) ->
     return _BIND_TOKEN_PATTERN.sub(_replace, sql_text or "")
 
 
+def _normalize_embedded_query_sql(sql_text: str) -> str:
+    """Normalize a SQL fragment before nesting it inside another SELECT."""
+    text = sql_text.replace("\ufeff", "").replace("\u200b", "").replace("\u00a0", " ")
+    text = "\n".join(_strip_sqlplus_terminator_lines(text.splitlines())).strip()
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\s+\n", "\n", text)
+    return text.strip().rstrip(";").strip()
+
+
 # Build count-comparison test SQL without calling the LLM.
 def _build_deterministic_test_sql(
     from_sql: str,
@@ -360,8 +368,8 @@ def _build_deterministic_test_sql(
 
     selects: list[str] = []
     for idx, bind_case in enumerate(bind_sets, start=1):
-        rendered_from = _render_sql_with_bind_values(from_sql, bind_case).strip()
-        rendered_to = _render_sql_with_bind_values(to_sql, bind_case).strip()
+        rendered_from = _normalize_embedded_query_sql(_render_sql_with_bind_values(from_sql, bind_case))
+        rendered_to = _normalize_embedded_query_sql(_render_sql_with_bind_values(to_sql, bind_case))
         selects.append(
             "SELECT "
             f"{idx} AS CASE_NO, "
@@ -575,7 +583,6 @@ def generate_tobe_sql(
     job: SqlInfoJob,
     mapping_rules: list[MappingRuleItem],
     last_error: str | None = None,
-    feedback_examples: list[dict[str, str]] | None = None,
 ) -> str:
     """오케스트레이터가 사용하는 TO-BE SQL 생성 진입점."""
     return call_llm_api(
@@ -586,7 +593,6 @@ def generate_tobe_sql(
             job=job,
             mapping_rules=mapping_rules,
             last_error=last_error,
-            feedback_examples=feedback_examples,
         ),
     )
 
@@ -651,14 +657,14 @@ def generate_comparison_test_sql(
     return _build_deterministic_test_sql(left_sql, right_sql, bind_sets or [{}])
 
 
-def generate_good_sql(
+def generate_tuned_sql(
     job: SqlInfoJob,
     tobe_sql: str,
-    normalized_sql: str,
-    detected_rules_text: str,
+    top_rules_json: str,
+    support_case_json: str,
     tuning_context_text: str,
 ) -> str:
-    """Generate one GOOD_SQL proposal from a verified TOBE SQL."""
+    """Generate one TUNED_SQL proposal from a verified TOBE SQL."""
     return call_llm_api(
         api_key=None,
         model=None,
@@ -666,8 +672,8 @@ def generate_good_sql(
         messages=build_tuning_sql_messages(
             job=job,
             tobe_sql=tobe_sql,
-            normalized_sql=normalized_sql,
-            detected_rules_text=detected_rules_text,
+            top_rules_json=top_rules_json,
+            support_case_json=support_case_json,
             tuning_context_text=tuning_context_text,
         ),
     )
