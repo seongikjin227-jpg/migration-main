@@ -21,8 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from app.common import is_stop_requested, logger
 from app.flows.job_flow import MigrationOrchestrator
 from app.repositories.result_repository import get_pending_jobs, increment_batch_count
-from app.features.rag.feedback_rag_service import feedback_rag_service
-from app.features.rag.tobe_rag_service import tobe_rag_service
+from app.features.rag.bind_rag_service import bind_rag_service
 
 
 NODE_INIT_CYCLE = "init_cycle"
@@ -160,32 +159,17 @@ class BatchRuntimeGraphRunner:
         if is_stop_requested():
             return {"stop_requested": True}
 
-        logger.info("[Startup] RAG sync started (TOBE=new case-based index, BIND=legacy feedback index)")
+        logger.info("[Startup] RAG sync started (BIND=bind-only index)")
         try:
-            tobe_result = tobe_rag_service.sync_index(limit=None, rebuild=False)
-            result = feedback_rag_service.sync_index(limit=None, correct_kinds=["BIND"])
+            result = bind_rag_service.sync_index(limit=None)
             logger.info(
-                "[Startup] TOBE RAG sync completed "
-                f"(source_rows={tobe_result['source_rows']}, "
-                f"upserted={tobe_result['upserted']}, "
-                f"skipped_unchanged={tobe_result['skipped_unchanged']}, "
-                f"skipped_no_correct_sql={tobe_result['skipped_no_correct_sql']}, "
-                f"skipped_parser_failed={tobe_result.get('skipped_parser_failed', 0)}, "
-                f"deleted={tobe_result['deleted']})"
-            )
-            logger.info(
-                "[Startup] Legacy feedback RAG sync completed (BIND only) "
+                "[Startup] BIND RAG sync completed "
                 f"(source_rows={result['source_rows']}, "
                 f"upserted={result['upserted']}, "
                 f"skipped_unchanged={result['skipped_unchanged']}, "
                 f"skipped_no_correct_sql={result['skipped_no_correct_sql']}, "
                 f"deleted={result['deleted']})"
             )
-            if tobe_result["source_rows"] <= 0:
-                logger.warning(
-                    "[Startup] TOBE RAG source rows are empty. "
-                    "No staged correct SQL corpus found; TOBE retrieval examples may be empty."
-                )
             return {"startup_synced": True, "startup_sync_error": None, "stop_requested": False}
         except Exception as exc:
             logger.error(f"[Startup] RAG sync failed: {exc}")

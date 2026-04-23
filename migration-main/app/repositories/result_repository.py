@@ -2,13 +2,12 @@
 
 from app.db import get_connection, get_result_table, split_table_owner_and_name
 from app.common import SqlInfoJob
+from app.services.sql_format_service import format_sql_for_storage
 
 _COLUMN_LENGTH_CACHE: dict[str, dict[str, int]] = {}
 _AVAILABLE_COLUMNS_CACHE: dict[str, set[str]] = {}
 _CORRECT_COLUMN_MAP = {
-    "TOBE": "TOBE_CORRECT_SQL",
     "BIND": "BIND_CORRECT_SQL",
-    "TEST": "TEST_CORRECT_SQL",
 }
 _LEGACY_CORRECT_COLUMN = "CORRECT_SQL"
 
@@ -136,12 +135,11 @@ def _row_to_sql_info_job(row) -> SqlInfoJob:
         log_text=_to_optional_text(row[12]),
         upd_ts=row[13],
         edited_yn=_to_optional_text(row[14]),
-        tobe_correct_sql=_to_optional_text(row[15]) if len(row) > 15 else None,
-        bind_correct_sql=_to_optional_text(row[16]) if len(row) > 16 else None,
-        test_correct_sql=_to_optional_text(row[17]) if len(row) > 17 else None,
-        good_sql=_to_optional_text(row[18]) if len(row) > 18 else None,
-        tuning_status=_to_optional_text(row[19]) if len(row) > 19 else None,
-        good_test_sql=_to_optional_text(row[20]) if len(row) > 20 else None,
+        bind_correct_sql=_to_optional_text(row[15]) if len(row) > 15 else None,
+        tuned_sql=_to_optional_text(row[16]) if len(row) > 16 else None,
+        tuning_status=_to_optional_text(row[17]) if len(row) > 17 else None,
+        tuned_test_sql=_to_optional_text(row[18]) if len(row) > 18 else None,
+        block_rag_content=_to_optional_text(row[19]) if len(row) > 19 else None,
     )
 
 
@@ -153,7 +151,7 @@ def get_pending_jobs() -> list[SqlInfoJob]:
         column
         if column in available_columns
         else f"CAST(NULL AS VARCHAR2(4000)) AS {column}"
-        for column in ("TOBE_CORRECT_SQL", "BIND_CORRECT_SQL", "TEST_CORRECT_SQL", "GOOD_SQL", "TUNING_STATUS", "GOOD_TEST_SQL")
+        for column in ("BIND_CORRECT_SQL", "TUNED_SQL", "TUNING_STATUS", "TUNED_TEST_SQL", "BLOCK_RAG_CONTENT")
     )
 
     query = f"""
@@ -201,6 +199,7 @@ def increment_batch_count(row_id: str) -> None:
 def update_cycle_result(
     row_id: str,
     tobe_sql: str,
+    block_rag_content: str | None,
     bind_sql: str,
     bind_set: str | None,
     test_sql: str,
@@ -212,10 +211,11 @@ def update_cycle_result(
     payload = _fit_payload_to_column_limits(
         table=table,
         values={
-            "TO_SQL_TEXT": tobe_sql,
-            "BIND_SQL": bind_sql,
+            "TO_SQL_TEXT": format_sql_for_storage(tobe_sql),
+            "BLOCK_RAG_CONTENT": _to_optional_text(block_rag_content),
+            "BIND_SQL": format_sql_for_storage(bind_sql),
             "BIND_SET": bind_set,
-            "TEST_SQL": test_sql,
+            "TEST_SQL": format_sql_for_storage(test_sql),
             "STATUS": status,
             "LOG": final_log,
         },
@@ -223,13 +223,14 @@ def update_cycle_result(
     query = f"""
         UPDATE {table}
         SET TO_SQL_TEXT = :1,
-            BIND_SQL = :2,
-            BIND_SET = :3,
-            TEST_SQL = :4,
-            STATUS = :5,
-            LOG = :6,
+            BLOCK_RAG_CONTENT = :2,
+            BIND_SQL = :3,
+            BIND_SET = :4,
+            TEST_SQL = :5,
+            STATUS = :6,
+            LOG = :7,
             UPD_TS = CURRENT_TIMESTAMP
-        WHERE ROWID = CHARTOROWID(:7)
+        WHERE ROWID = CHARTOROWID(:8)
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -237,6 +238,7 @@ def update_cycle_result(
             query,
             [
                 payload["TO_SQL_TEXT"],
+                payload["BLOCK_RAG_CONTENT"],
                 payload["BIND_SQL"],
                 payload["BIND_SET"],
                 payload["TEST_SQL"],
@@ -250,8 +252,8 @@ def update_cycle_result(
 
 def update_tuning_result(
     row_id: str,
-    good_sql: str | None,
-    good_test_sql: str | None,
+    tuned_sql: str | None,
+    tuned_test_sql: str | None,
     tuning_status: str,
 ) -> None:
     """Persist tuning-stage final fields back to NEXT_SQL_INFO."""
@@ -259,15 +261,15 @@ def update_tuning_result(
     payload = _fit_payload_to_column_limits(
         table=table,
         values={
-            "GOOD_SQL": good_sql,
-            "GOOD_TEST_SQL": good_test_sql,
+            "TUNED_SQL": format_sql_for_storage(tuned_sql),
+            "TUNED_TEST_SQL": format_sql_for_storage(tuned_test_sql),
             "TUNING_STATUS": tuning_status,
         },
     )
     query = f"""
         UPDATE {table}
-        SET GOOD_SQL = :1,
-            GOOD_TEST_SQL = :2,
+        SET TUNED_SQL = :1,
+            TUNED_TEST_SQL = :2,
             TUNING_STATUS = :3,
             TUNING_UPD_TS = CURRENT_TIMESTAMP
         WHERE ROWID = CHARTOROWID(:4)
@@ -277,8 +279,8 @@ def update_tuning_result(
         cursor.execute(
             query,
             [
-                payload["GOOD_SQL"],
-                payload["GOOD_TEST_SQL"],
+                payload["TUNED_SQL"],
+                payload["TUNED_TEST_SQL"],
                 payload["TUNING_STATUS"],
                 row_id,
             ],
@@ -287,15 +289,30 @@ def update_tuning_result(
 
 
 def insert_tuning_log(
+    execution_id: str | None,
+    row_id: str | None,
     space_nm: str,
     sql_id: str,
+    tag_kind: str | None,
     tuning_status: str,
+    job_status: str | None,
+    final_stage: str | None,
+    retry_count: int | None,
     llm_used_yn: str,
     applied_rule_ids: str | None,
     diff_summary: str | None,
     error_message: str | None,
+    tobe_sql: str | None = None,
+    tobe_rag_debug_json: str | None = None,
+    tobe_feedback_examples_json: str | None = None,
+    retrieved_rule_ids_json: str | None = None,
+    retrieved_case_ids_json: str | None = None,
+    source_sql_raw: str | None = None,
+    source_sql_preprocessed: str | None = None,
+    source_sql_normalized: str | None = None,
+    retrieval_query_text: str | None = None,
 ) -> None:
-    """Insert one summary tuning log row when the Oracle log table exists."""
+    """Insert one trace-oriented tuning log row when the Oracle log table exists."""
     log_table = "NEXT_SQL_TUNING_LOG"
     sequence_name = "SEQ_NEXT_SQL_TUNING_LOG"
     available_tables_query = """
@@ -311,10 +328,25 @@ def insert_tuning_log(
     insert_sql = f"""
         INSERT INTO {log_table} (
             TUNING_ID,
+            EXECUTION_ID,
+            ROW_ID,
             SPACE_NM,
             SQL_ID,
+            TAG_KIND,
             TUNING_STATUS,
+            JOB_STATUS,
+            FINAL_STAGE,
+            RETRY_COUNT,
             LLM_USED_YN,
+            TOBE_SQL,
+            SOURCE_SQL_RAW,
+            SOURCE_SQL_PREPROCESSED,
+            SOURCE_SQL_NORMALIZED,
+            RETRIEVAL_QUERY_TEXT,
+            TOBE_RAG_DEBUG_JSON,
+            TOBE_FEEDBACK_EXAMPLES_JSON,
+            RETRIEVED_RULE_IDS_JSON,
+            RETRIEVED_CASE_IDS_JSON,
             APPLIED_RULE_IDS,
             DIFF_SUMMARY,
             ERROR_MESSAGE,
@@ -329,6 +361,21 @@ def insert_tuning_log(
             :5,
             :6,
             :7,
+            :8,
+            :9,
+            :10,
+            :11,
+            :12,
+            :13,
+            :14,
+            :15,
+            :16,
+            :17,
+            :18,
+            :19,
+            :20,
+            :21,
+            :22,
             SYSTIMESTAMP,
             SYSTIMESTAMP
         )
@@ -342,16 +389,58 @@ def insert_tuning_log(
         cursor.execute(available_sequences_query, [sequence_name])
         if int(cursor.fetchone()[0]) <= 0:
             return
+        payload = _fit_payload_to_column_limits(
+            table=log_table,
+            values={
+                "EXECUTION_ID": _to_optional_text(execution_id),
+                "ROW_ID": _to_optional_text(row_id),
+                "SPACE_NM": _to_text(space_nm),
+                "SQL_ID": _to_text(sql_id),
+                "TAG_KIND": _to_optional_text(tag_kind),
+                "TUNING_STATUS": _to_text(tuning_status),
+                "JOB_STATUS": _to_optional_text(job_status),
+                "FINAL_STAGE": _to_optional_text(final_stage),
+                "RETRY_COUNT": retry_count if retry_count is not None else 0,
+                "LLM_USED_YN": (_to_text(llm_used_yn or "N")[:1] or "N").upper(),
+                "TOBE_SQL": format_sql_for_storage(_to_optional_text(tobe_sql)),
+                "SOURCE_SQL_RAW": _to_optional_text(source_sql_raw),
+                "SOURCE_SQL_PREPROCESSED": format_sql_for_storage(_to_optional_text(source_sql_preprocessed)),
+                "SOURCE_SQL_NORMALIZED": format_sql_for_storage(_to_optional_text(source_sql_normalized)),
+                "RETRIEVAL_QUERY_TEXT": _to_optional_text(retrieval_query_text),
+                "TOBE_RAG_DEBUG_JSON": _to_optional_text(tobe_rag_debug_json),
+                "TOBE_FEEDBACK_EXAMPLES_JSON": _to_optional_text(tobe_feedback_examples_json),
+                "RETRIEVED_RULE_IDS_JSON": _to_optional_text(retrieved_rule_ids_json),
+                "RETRIEVED_CASE_IDS_JSON": _to_optional_text(retrieved_case_ids_json),
+                "APPLIED_RULE_IDS": _to_optional_text(applied_rule_ids),
+                "DIFF_SUMMARY": _to_optional_text(diff_summary),
+                "ERROR_MESSAGE": _to_optional_text(error_message),
+            },
+        )
         cursor.execute(
             insert_sql,
             [
-                _to_text(space_nm),
-                _to_text(sql_id),
-                _to_text(tuning_status),
-                (_to_text(llm_used_yn or "N")[:1] or "N").upper(),
-                _to_optional_text(applied_rule_ids),
-                _to_optional_text(diff_summary),
-                _to_optional_text(error_message),
+                payload["EXECUTION_ID"],
+                payload["ROW_ID"],
+                payload["SPACE_NM"],
+                payload["SQL_ID"],
+                payload["TAG_KIND"],
+                payload["TUNING_STATUS"],
+                payload["JOB_STATUS"],
+                payload["FINAL_STAGE"],
+                payload["RETRY_COUNT"],
+                payload["LLM_USED_YN"],
+                payload["TOBE_SQL"],
+                payload["SOURCE_SQL_RAW"],
+                payload["SOURCE_SQL_PREPROCESSED"],
+                payload["SOURCE_SQL_NORMALIZED"],
+                payload["RETRIEVAL_QUERY_TEXT"],
+                payload["TOBE_RAG_DEBUG_JSON"],
+                payload["TOBE_FEEDBACK_EXAMPLES_JSON"],
+                payload["RETRIEVED_RULE_IDS_JSON"],
+                payload["RETRIEVED_CASE_IDS_JSON"],
+                payload["APPLIED_RULE_IDS"],
+                payload["DIFF_SUMMARY"],
+                payload["ERROR_MESSAGE"],
             ],
         )
         conn.commit()
@@ -422,89 +511,6 @@ def get_feedback_corpus_rows(correct_kind: str, limit: int = 2000) -> list[dict[
                     "correct_kind": normalized_kind,
                     "edited_yn": _to_text(row[7]),
                     "upd_ts": _to_text(row[8]),
-                }
-            )
-    return rows
-
-
-def get_tobe_rag_corpus_rows(
-    limit: int = 2000,
-    allow_legacy_fallback: bool = True,
-) -> list[dict[str, str]]:
-    """Load TOBE-stage RAG corpus rows using TOBE_CORRECT_SQL with optional legacy fallback."""
-    table = get_result_table()
-    safe_limit = max(1, min(limit, 20000))
-    available_columns = _get_available_columns(table)
-
-    has_tobe_correct = "TOBE_CORRECT_SQL" in available_columns
-    has_legacy_correct = _LEGACY_CORRECT_COLUMN in available_columns and allow_legacy_fallback
-    if not has_tobe_correct and not has_legacy_correct:
-        return []
-
-    tobe_expr = "TOBE_CORRECT_SQL" if has_tobe_correct else "CAST(NULL AS VARCHAR2(4000))"
-    legacy_expr = _LEGACY_CORRECT_COLUMN if has_legacy_correct else "CAST(NULL AS VARCHAR2(4000))"
-
-    query = f"""
-        SELECT ROWIDTOCHAR(ROWID) AS RID,
-               TO_CHAR(SPACE_NM),
-               TO_CHAR(SQL_ID),
-               TO_CHAR(TAG_KIND),
-               FR_SQL_TEXT,
-               EDIT_FR_SQL,
-               TO_SQL_TEXT,
-               TARGET_TABLE,
-               {tobe_expr} AS TOBE_CORRECT_SQL,
-               {legacy_expr} AS LEGACY_CORRECT_SQL,
-               EDITED_YN,
-               UPD_TS
-        FROM (
-            SELECT ROWIDTOCHAR(ROWID) AS RID,
-                   SPACE_NM,
-                   SQL_ID,
-                   TAG_KIND,
-                   FR_SQL_TEXT,
-                   EDIT_FR_SQL,
-                   TO_SQL_TEXT,
-                   TARGET_TABLE,
-                   {tobe_expr} AS TOBE_CORRECT_SQL,
-                   {legacy_expr} AS LEGACY_CORRECT_SQL,
-                   EDITED_YN,
-                   UPD_TS
-            FROM {table}
-            WHERE (
-                ({tobe_expr}) IS NOT NULL
-                {"OR (" + legacy_expr + ") IS NOT NULL" if has_legacy_correct else ""}
-            )
-            ORDER BY UPD_TS DESC
-        )
-        WHERE ROWNUM <= {safe_limit}
-    """
-
-    rows: list[dict[str, str]] = []
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        for row in cursor.fetchall():
-            tobe_correct_sql = _to_optional_text(row[8]) or ""
-            legacy_correct_sql = _to_optional_text(row[9]) or ""
-            correct_sql = tobe_correct_sql or legacy_correct_sql
-            if not correct_sql.strip():
-                continue
-            rows.append(
-                {
-                    "row_id": _to_text(row[0]),
-                    "space_nm": _to_text(row[1]),
-                    "sql_id": _to_text(row[2]),
-                    "tag_kind": _to_text(row[3]),
-                    "fr_sql_text": _to_text(row[4]),
-                    "edit_fr_sql": _to_optional_text(row[5]) or "",
-                    "to_sql_text": _to_optional_text(row[6]) or "",
-                    "target_table": _to_optional_text(row[7]) or "",
-                    "tobe_correct_sql": tobe_correct_sql,
-                    "legacy_correct_sql": legacy_correct_sql,
-                    "correct_sql": correct_sql,
-                    "edited_yn": _to_text(row[10]),
-                    "upd_ts": _to_text(row[11]),
                 }
             )
     return rows

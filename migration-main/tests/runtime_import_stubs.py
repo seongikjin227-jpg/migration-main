@@ -59,7 +59,6 @@ def install_runtime_import_stubs() -> None:
         result_repository.update_tuning_result = lambda **_kwargs: None
         result_repository.insert_tuning_log = lambda **_kwargs: None
         result_repository.get_feedback_corpus_rows = lambda limit=2000, correct_kinds=None: []
-        result_repository.get_tobe_rag_corpus_rows = lambda limit=2000, allow_legacy_fallback=True: []
         sys.modules["app.repositories.result_repository"] = result_repository
 
     if "app.repositories.migration_log_repository" not in sys.modules:
@@ -74,13 +73,13 @@ def install_runtime_import_stubs() -> None:
         binding_service.extract_bind_param_names = lambda _sql: []
         sys.modules["app.services.binding_service"] = binding_service
 
-    if "app.features.rag.feedback_rag_service" not in sys.modules:
-        feedback_rag_module = types.ModuleType("app.features.rag.feedback_rag_service")
+    if "app.features.rag.bind_rag_service" not in sys.modules:
+        bind_rag_module = types.ModuleType("app.features.rag.bind_rag_service")
 
-        class _FeedbackRagService:
-            """Feedback RAG stub that returns empty retrieval results."""
+        class _BindRagService:
+            """BIND RAG stub that returns empty retrieval results."""
 
-            def retrieve_feedback_examples(self, **_kwargs):
+            def retrieve_bind_examples(self, **_kwargs):
                 return []
 
             def sync_index(self, **_kwargs):
@@ -92,28 +91,8 @@ def install_runtime_import_stubs() -> None:
                     "deleted": 0,
                 }
 
-        feedback_rag_module.feedback_rag_service = _FeedbackRagService()
-        sys.modules["app.features.rag.feedback_rag_service"] = feedback_rag_module
-
-    if "app.features.rag.tobe_rag_service" not in sys.modules:
-        tobe_rag_module = types.ModuleType("app.features.rag.tobe_rag_service")
-
-        class _TobeRagService:
-            def retrieve_reference_cases(self, **_kwargs):
-                return []
-
-            def sync_index(self, **_kwargs):
-                return {
-                    "source_rows": 0,
-                    "upserted": 0,
-                    "skipped_unchanged": 0,
-                    "skipped_no_correct_sql": 0,
-                    "skipped_parser_failed": 0,
-                    "deleted": 0,
-                }
-
-        tobe_rag_module.tobe_rag_service = _TobeRagService()
-        sys.modules["app.features.rag.tobe_rag_service"] = tobe_rag_module
+        bind_rag_module.bind_rag_service = _BindRagService()
+        sys.modules["app.features.rag.bind_rag_service"] = bind_rag_module
 
     if "app.services.llm_service" not in sys.modules:
         llm_service = types.ModuleType("app.services.llm_service")
@@ -122,7 +101,7 @@ def install_runtime_import_stubs() -> None:
         llm_service.generate_test_sql = lambda **_kwargs: ""
         llm_service.generate_test_sql_no_bind = lambda **_kwargs: ""
         llm_service.generate_comparison_test_sql = lambda *args, **_kwargs: ""
-        llm_service.generate_good_sql = lambda **_kwargs: ""
+        llm_service.generate_tuned_sql = lambda **_kwargs: ""
         llm_service.select_mapping_rules_for_job = lambda job, mapping_rules, fallback_to_all=True: mapping_rules
         sys.modules["app.services.llm_service"] = llm_service
 

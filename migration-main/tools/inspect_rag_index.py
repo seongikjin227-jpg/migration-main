@@ -14,7 +14,7 @@ from _bootstrap import ROOT_DIR  # noqa: F401
 def _build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser for the index-inspection utility."""
     parser = argparse.ArgumentParser(description="Inspect feedback RAG vector index in SQLite.")
-    parser.add_argument("--db-path", default=os.getenv("RAG_VECTOR_DB_PATH", str(ROOT_DIR / "migration.db")))
+    parser.add_argument("--db-path", default=os.getenv("RAG_VECTOR_DB_PATH", str(ROOT_DIR / "data" / "rag" / "rag.db")))
     parser.add_argument("--table", default=os.getenv("RAG_VECTOR_TABLE", "feedback_rag_index"))
     parser.add_argument("--limit", type=int, default=10, help="Sample row count to print.")
     parser.add_argument("--show-vector", action="store_true", help="Print first 8 vector values for each row.")

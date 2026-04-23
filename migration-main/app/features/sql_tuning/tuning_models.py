@@ -1,5 +1,7 @@
 """Data models used by the SQL tuning pipeline."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 
@@ -14,12 +16,9 @@ class TuningStatus:
 @dataclass
 class TuningRule:
     rule_id: str
-    rule_name: str
-    category: str
-    severity: str
-    semantic_risk: str
-    llm_allowed: bool
-    verification_required: bool = True
+    guidance: list[str] = field(default_factory=list)
+    example_bad_sql: str = ""
+    example_tuned_sql: str = ""
 
 
 @dataclass
@@ -27,6 +26,16 @@ class DetectedRule:
     rule: TuningRule
     detected_fragment: str
     detection_reason: str
+    score: float = 0.0
+
+
+@dataclass
+class SupportCase:
+    case_id: str
+    why_selected: str
+    bad_sql: str
+    tuned_sql: str
+    applied_rules: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -35,10 +44,11 @@ class TuningPipelineResult:
     normalized_sql: str = ""
     normalization_notes: list[str] = field(default_factory=list)
     detected_rules: list[DetectedRule] = field(default_factory=list)
-    detected_rules_text: str = ""
+    top_rules_json: str = "[]"
+    support_case_json: str = "{}"
     tuning_context_text: str = ""
-    good_sql: str | None = None
-    good_test_sql: str | None = None
+    tuned_sql: str | None = None
+    tuned_test_sql: str | None = None
     llm_used_yn: str = "N"
     applied_rule_ids: list[str] = field(default_factory=list)
     diff_summary: str | None = None
